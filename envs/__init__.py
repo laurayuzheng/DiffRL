@@ -12,3 +12,5 @@ from envs.hopper import HopperEnv
 from envs.snu_humanoid import SNUHumanoidEnv
 from envs.cartpole_swing_up import CartPoleSwingUpEnv
 from envs.humanoid import HumanoidEnv
+
+from envs._ackley import AckleyEnv
