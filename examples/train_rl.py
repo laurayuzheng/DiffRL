@@ -31,11 +31,17 @@ from utils.common import *
 
 def create_dflex_env(**kwargs):
     env_fn = getattr(envs, cfg_train["params"]["diff_env"]["name"])
+
+    # grad informed RL requires gradient;
+    if cfg_train["params"]["algo"]["name"] == "grad_a2c_continuous":
+        no_grad = False
+    else:
+        no_grad = True
     
     env = env_fn(num_envs=cfg_train["params"]["config"]["num_actors"], \
         render=args.render, seed=args.seed, \
         episode_length=cfg_train["params"]["diff_env"].get("episode_length", 1000), \
-        no_grad=True, stochastic_init=cfg_train['params']['diff_env']['stochastic_env'], \
+        no_grad=no_grad, stochastic_init=cfg_train['params']['diff_env']['stochastic_env'], \
         MM_caching_frequency=cfg_train['params']['diff_env'].get('MM_caching_frequency', 1))
 
     print('num_envs = ', env.num_envs)
@@ -139,7 +145,8 @@ def get_args(): # TODO: delve into the arguments
             "help": "whether generate rendering file."},
         {"name": "--logdir", "type": str, "default": "logs/tmp/rl/"},
         {"name": "--no-time-stamp", "action": "store_true", "default": False,
-            "help": "whether not add time stamp at the log path"}]
+            "help": "whether not add time stamp at the log path"},
+        {"name": "--gi_alpha", "type": float, "default": 0.1}]
 
     # parse arguments
     args = parse_arguments(
@@ -165,6 +172,9 @@ if __name__ == '__main__':
 
     if args.num_envs > 0:
         cfg_train["params"]["config"]["num_actors"] = args.num_envs
+
+    # alpha
+    cfg_train["params"]["config"]["gi_alpha"] = args.gi_alpha
         
     vargs = vars(args)
     

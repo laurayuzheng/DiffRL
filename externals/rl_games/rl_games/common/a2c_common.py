@@ -1136,6 +1136,8 @@ class ContinuousA2CBase(A2CBase):
             if self.multi_gpu:
                 self.hvd.sync_stats(self)
 
+            print(f"Num steps: {frame + self.curr_frames}")
+
             if self.rank == 0:
                 # do we need scaled_time?
                 scaled_time = sum_time #self.num_agents * sum_time

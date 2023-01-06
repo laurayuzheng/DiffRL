@@ -1,7 +1,10 @@
+from multiprocessing.sharedctypes import Value
 from rl_games.common import tr_helpers
 import time
 
 import torch 
+from torch import nn
+import numpy as np
 import gym
 
 from rl_games.algos_torch import torch_ext
@@ -10,10 +13,8 @@ from rl_games.common.a2c_common import swap_and_flatten01, A2CBase
 from rl_games.algos_torch.a2c_continuous import A2CAgent
 from rl_games.common._grad_experience import GradExperienceBuffer
 from rl_games.algos_torch._grad_running_mean_std import GradRunningMeanStd
-
-def tensor_normalize(t):
-
-    return (t - t.mean()) / (t.std() + 1e-8)
+from rl_games.common import schedulers
+from rl_games.common import common_losses
 
 class GradA2CAgent(A2CAgent):
     def __init__(self, base_name, config):
@@ -31,9 +32,13 @@ class GradA2CAgent(A2CAgent):
         if self.normalize_value:
             self.value_mean_std = GradRunningMeanStd((1,)).to(self.ppo_device)
 
-        # we have additional hyperparameter [alpha] that determines gradient size;
+        # we have additional hyperparameter [gi_alpha] that determines gradient size;
 
-        self.alpha: float = 1e-2
+        self.init_alpha(config)
+
+        # we have additional hyperparameter [gi_step_num] that determines differentiable step size;
+
+        self.gi_step_num = config.get('gi_step_num', 32)
 
         self.reduced_e_clip = self.e_clip
 
@@ -41,6 +46,23 @@ class GradA2CAgent(A2CAgent):
 
         assert not self.has_central_value, "Not supported yet"
         assert not 'phasic_policy_gradients' in self.config, "Not supported yet"
+
+    def init_alpha(self, config):
+
+        self.gi_alpha: float = config.get('gi_alpha', 0.1)
+        gi_alpha_scheduler_type = config.get('gi_alpha_schedule', 'identity')
+
+        if gi_alpha_scheduler_type == 'identity':
+            self.gi_alpha_scheduler = schedulers.IdentityScheduler()
+        elif gi_alpha_scheduler_type == 'linear':
+            self.gi_alpha_scheduler = schedulers.LinearScheduler(self.gi_alpha, max_steps=self.max_epochs)
+        else:
+            raise ValueError()
+
+    def update_alpha(self):
+
+        self.gi_alpha , _ = self.gi_alpha_scheduler.update(self.gi_alpha, None, self.epoch_num, 0, None)
+        self.writer.add_scalar('info/gi_alpha', self.gi_alpha, self.epoch_num)
 
     def init_tensors(self):
         
@@ -90,19 +112,24 @@ class GradA2CAgent(A2CAgent):
         entropies = []
         kls = []
 
+        # estimator variances;
+        a_est_vars = []
+
         if self.is_rnn:
             raise NotImplementedError()
 
         for _ in range(0, self.mini_epochs_num):
             ep_kls = []
             for i in range(len(self.dataset)):
-                a_loss, c_loss, entropy, kl, last_lr, lr_mul, cmu, csigma, b_loss = self.train_actor_critic(self.dataset[i])
+                a_loss, c_loss, entropy, kl, last_lr, lr_mul, cmu, csigma, b_loss, a_est_var = self.train_actor_critic(self.dataset[i])
                 a_losses.append(a_loss)
                 c_losses.append(c_loss)
                 ep_kls.append(kl)
                 entropies.append(entropy)
                 if self.bounds_loss_coef is not None:
                     b_losses.append(b_loss)
+
+                a_est_vars.append(a_est_var)
 
                 self.dataset.update_mu_sigma(cmu, csigma)   
 
@@ -126,6 +153,14 @@ class GradA2CAgent(A2CAgent):
                 av_kls = self.hvd.average_value(torch_ext.mean_list(kls), 'ep_kls')
             self.last_lr, self.entropy_coef = self.scheduler.update(self.last_lr, self.entropy_coef, self.epoch_num, 0,av_kls.item())
             self.update_lr(self.last_lr)
+
+        # update alpha;
+
+        self.update_alpha()
+
+        # log estimator variance;
+
+        self.writer.add_scalar("info/est_var", np.mean(a_est_vars), self.epoch_num)
 
         if self.has_phasic_policy_gradients:
             self.ppg_aux_loss.train_net(self)
@@ -192,12 +227,25 @@ class GradA2CAgent(A2CAgent):
 
         step_time = 0.0
 
-        # initialize trajectory to cut off gradients between episodes;
-        # assume [self.vec_env] is [RLGPUEnv];
-        self.obs = self.vec_env.env.initialize_trajectory()
-        self.obs = self.obs_to_tensors(self.obs)
+        # indicator for steps that grad computation starts;
+        grad_start = torch.zeros_like(self.experience_buffer.tensor_dict['dones'])
 
         for n in range(self.horizon_length):
+
+            if n % self.gi_step_num == 0:
+
+                # initialize trajectory to cut off gradients;
+                # assume [self.vec_env] is [RLGPUEnv];
+
+                self.obs = self.vec_env.env.initialize_trajectory()
+                self.obs = self.obs_to_tensors(self.obs)
+                grad_start[n, :] = 1.0
+
+            else:
+
+                # if trajectory has been done in last step and new episode starts, cut off grads;
+                grad_start[n, :] = self.dones
+
             if self.use_action_masks:
                 masks = self.vec_env.get_action_masks()
                 res_dict = self.get_masked_action_values(self.obs, masks)
@@ -215,7 +263,8 @@ class GradA2CAgent(A2CAgent):
                 self.experience_buffer.update_data('states', n, self.obs['states'])
 
             step_time_start = time.time()
-            actions = self.experience_buffer.tensor_dict['actions'][n]
+            actions = torch.tanh(self.experience_buffer.tensor_dict['actions'][n])
+            # actions = self.experience_buffer.tensor_dict['actions'][n]
             self.obs, rewards, self.dones, infos = self.env_step(actions)
             step_time_end = time.time()
 
@@ -257,7 +306,7 @@ class GradA2CAgent(A2CAgent):
         # compute advantage gradients;
 
         self.experience_buffer.tensor_dict['actions'].retain_grad()
-        mb_adv_grads = self.advantage_gradients_gae(mb_advs, mb_fdones)
+        mb_adv_grads = self.advantage_gradients_gae(mb_advs, grad_start)
         self.experience_buffer.tensor_dict['adv_grads'] = mb_adv_grads
 
         # clear computation graph;
@@ -274,17 +323,17 @@ class GradA2CAgent(A2CAgent):
 
         return batch_dict
 
-    def advantage_gradients_gae(self, mb_advs, mb_fdones):
+    def advantage_gradients_gae(self, mb_advs, grad_start):
 
         '''
         Compute advantage gradients, of which size equals to (# timestep, # actors, # action size).
         '''
 
-        new_episode_indices = mb_fdones.unsqueeze(-1).nonzero(as_tuple=True)
-        adv_sum = torch.sum(mb_advs[new_episode_indices])
+        grad_start_indices = grad_start.unsqueeze(-1).nonzero(as_tuple=True)
+        adv_sum = torch.sum(mb_advs[grad_start_indices])
 
-        num_timestep = mb_fdones.shape[0]
-        num_actors = mb_fdones.shape[1]
+        num_timestep = grad_start.shape[0]
+        num_actors = grad_start.shape[1]
 
         # compute gradients;
 
@@ -302,8 +351,8 @@ class GradA2CAgent(A2CAgent):
             for nt in range(num_timestep):
 
                 # if new episode has been started, set [cv] to 1; 
-                new_episode_indices = mb_fdones[nt].unsqueeze(-1).nonzero(as_tuple=True)
-                cv[new_episode_indices] = 1.0
+                grad_start_indices = grad_start[nt].unsqueeze(-1).nonzero(as_tuple=True)
+                cv[grad_start_indices] = 1.0
 
                 adv_grads[nt] = adv_grads[nt] * cv
                 cv = cv * c
@@ -342,50 +391,96 @@ class GradA2CAgent(A2CAgent):
 
         advantages = returns - values
 
+        # adjust [alpha] according to grad size;
+
+        with torch.no_grad():
+
+            adv_grads_size = torch.norm(adv_grads, p=2, dim=1)
+            actions_size = torch.clip(torch.norm(actions, p=2, dim=1), min=1e-6)
+            adv_grads_ratio = adv_grads_size / actions_size
+            mean_adv_grads_ratio = torch.mean(adv_grads_ratio).item()
+
+            self.writer.add_scalar("info/adv_grads_ratio", mean_adv_grads_ratio, self.epoch_num)
+
+            curr_alpha = self.gi_alpha / max(mean_adv_grads_ratio, 1e-6)
+
+            self.writer.add_scalar("info/curr_alpha", curr_alpha, self.epoch_num)
+
         # perturb [actions] and [advantages] using [adv_grads];
 
         adv_grads_norm = torch.pow(torch.norm(adv_grads, p=2, dim=1, keepdim=True), 2.0)
-        actions = actions + adv_grads * self.alpha
-        advantages = advantages + adv_grads_norm * self.alpha
+        actions = actions + adv_grads * curr_alpha
+        advantages = advantages + adv_grads_norm * curr_alpha
 
         if self.normalize_value:
             values = self.value_mean_std(values)
             returns = self.value_mean_std(returns)
 
+        # render original and perturbed actions;
+
+        if self.vec_env.env.visualize:
+
+            env = self.vec_env.env
+
+            env.render('human', actions - adv_grads * curr_alpha, actions)
         
         # determine [reduced_e_clip];
 
-        self.set_eval()
+        if False:
 
-        with torch.no_grad():
+            self.set_eval()
 
-            obs_batch = obses
-            obs_batch = self._preproc_obs(obs_batch)
+            with torch.no_grad():
 
-            curr_batch_dict = {
-                'is_train': True,
-                'prev_actions': actions, 
-                'obs' : obs_batch,
-            }
+                obs_batch = obses
+                obs_batch = self._preproc_obs(obs_batch)
 
-            curr_res_dict = self.model(curr_batch_dict)
-            action_log_probs = -curr_res_dict['prev_neglogp']
-            old_action_log_probs = -neglogpacs
+                curr_batch_dict = {
+                    'is_train': True,
+                    'prev_actions': actions, 
+                    'obs' : obs_batch,
+                }
 
-            c = torch.exp(old_action_log_probs - action_log_probs)
+                curr_res_dict = self.model(curr_batch_dict)
+                action_log_probs = -curr_res_dict['prev_neglogp']
+                old_action_log_probs = -neglogpacs
 
-            c0 = (1.0 - c + self.e_clip) / c
-            c1 = (c - 1.0 + self.e_clip) / c
-            c = torch.min(torch.stack([c0, c1], dim=1), dim=1)[0]
+                c = torch.exp(old_action_log_probs - action_log_probs)
 
-            self.reduced_e_clip = torch.min(c).item()
-            self.reduced_e_clip = max(self.reduced_e_clip, 1e-2)
-            self.reduced_e_clip = min(self.reduced_e_clip, self.e_clip)
+                c0 = (1.0 - c + self.e_clip) / c
+                c1 = (c - 1.0 + self.e_clip) / c
+                c = torch.min(torch.stack([c0, c1], dim=1), dim=1)[0]
 
-            self.writer.add_scalar("info/reduced_e_clip", self.reduced_e_clip, self.frame)
+                self.reduced_e_clip = torch.min(c).item()
+                self.reduced_e_clip = max(self.reduced_e_clip, 1e-2)
+                self.reduced_e_clip = min(self.reduced_e_clip, self.e_clip)
+
+                self.writer.add_scalar("info/reduced_e_clip", self.reduced_e_clip, self.frame)
+                
+
+            self.set_train()
+
+        if True:
+
+            self.set_eval()
             
+            with torch.no_grad():
 
-        self.set_train()
+                obs_batch = obses
+                obs_batch = self._preproc_obs(obs_batch)
+
+                curr_batch_dict = {
+                    'is_train': True,
+                    'prev_actions': actions, 
+                    'obs' : obs_batch,
+                }
+
+                curr_res_dict = self.model(curr_batch_dict)
+
+                neglogpacs = curr_res_dict['prev_neglogp']
+                neglogpacs = torch.clip(neglogpacs, max=16)    
+
+            self.set_train()
 
         advantages = torch.sum(advantages, axis=1)
 
@@ -393,12 +488,7 @@ class GradA2CAgent(A2CAgent):
             if self.is_rnn:
                 raise NotImplementedError()
             else:
-                # compute jacobian;
-                # adv_jac = torch.autograd.functional.jacobian(tensor_normalize, advantages)
-                # adv_jac_diag = torch.diagonal(adv_jac, 0)
-                # adv_grads = adv_grads * adv_jac_diag.unsqueeze(-1)
-
-                advantages = tensor_normalize(advantages)
+                advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
         dataset_dict = {}
         dataset_dict['old_values'] = values
@@ -421,7 +511,7 @@ class GradA2CAgent(A2CAgent):
         
         state = super().get_full_state_weights()
 
-        state['alpha'] = self.alpha
+        state['gi_alpha'] = self.gi_alpha
 
         return state
 
@@ -429,7 +519,7 @@ class GradA2CAgent(A2CAgent):
         
         super().set_full_state_weights(weights)
 
-        self.alpha = weights['alpha']
+        self.gi_alpha = weights['gi_alpha']
 
     
     def calc_gradients(self, input_dict):
@@ -440,8 +530,103 @@ class GradA2CAgent(A2CAgent):
 
         self.e_clip = self.reduced_e_clip
 
-        ans = super().calc_gradients(input_dict)
+        # =================================================
+
+        value_preds_batch = input_dict['old_values']
+        old_action_log_probs_batch = input_dict['old_logp_actions']
+        advantage = input_dict['advantages']
+        old_mu_batch = input_dict['mu']
+        old_sigma_batch = input_dict['sigma']
+        return_batch = input_dict['returns']
+        actions_batch = input_dict['actions']
+        obs_batch = input_dict['obs']
+        obs_batch = self._preproc_obs(obs_batch)
+
+        lr = self.last_lr
+        kl = 1.0
+        lr_mul = 1.0
+        curr_e_clip = lr_mul * self.e_clip
+
+        batch_dict = {
+            'is_train': True,
+            'prev_actions': actions_batch, 
+            'obs' : obs_batch,
+        }
+
+        rnn_masks = None
+        if self.is_rnn:
+            rnn_masks = input_dict['rnn_masks']
+            batch_dict['rnn_states'] = input_dict['rnn_states']
+            batch_dict['seq_length'] = self.seq_len
+            
+        with torch.cuda.amp.autocast(enabled=self.mixed_precision):
+            res_dict = self.model(batch_dict)
+            action_log_probs = res_dict['prev_neglogp']
+            values = res_dict['values']
+            entropy = res_dict['entropy']
+            mu = res_dict['mus']
+            sigma = res_dict['sigmas']
+
+            a_loss = common_losses.actor_loss(old_action_log_probs_batch, action_log_probs, advantage, self.ppo, curr_e_clip)
+
+            # compute variance of our estimator;
+
+            if True:
+
+                ratio = torch.exp(old_action_log_probs_batch - action_log_probs)
+                mean_terms = advantage * ratio
+
+                _a_est_mean = torch.mean(mean_terms, dim=0).item()
+                
+                var_terms = torch.pow(mean_terms - _a_est_mean, 2.0)
+                _a_est_var = torch.mean(var_terms, dim=0).item()
+
+            if self.has_value_loss:
+                c_loss = common_losses.critic_loss(value_preds_batch, values, curr_e_clip, return_batch, self.clip_value)
+            else:
+                c_loss = torch.zeros(1, device=self.ppo_device)
+
+            b_loss = self.bound_loss(mu)
+            losses, sum_mask = torch_ext.apply_masks([a_loss.unsqueeze(1), c_loss, entropy.unsqueeze(1), b_loss.unsqueeze(1)], rnn_masks)
+            a_loss, c_loss, entropy, b_loss = losses[0], losses[1], losses[2], losses[3]
+
+            loss = a_loss + 0.5 * c_loss * self.critic_coef - entropy * self.entropy_coef + b_loss * self.bounds_loss_coef
+            
+            if self.multi_gpu:
+                self.optimizer.zero_grad()
+            else:
+                for param in self.model.parameters():
+                    param.grad = None
+
+        self.scaler.scale(loss).backward()
+        #TODO: Refactor this ugliest code of they year
+        if self.truncate_grads:
+            if self.multi_gpu:
+                self.optimizer.synchronize()
+                self.scaler.unscale_(self.optimizer)
+                nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_norm)
+                with self.optimizer.skip_synchronize():
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+            else:
+                self.scaler.unscale_(self.optimizer)
+                nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_norm)
+                self.scaler.step(self.optimizer)
+                self.scaler.update()    
+        else:
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+
+        with torch.no_grad():
+            reduce_kl = not self.is_rnn
+            kl_dist = torch_ext.policy_kl(mu.detach(), sigma.detach(), old_mu_batch, old_sigma_batch, reduce_kl)
+            if self.is_rnn:
+                kl_dist = (kl_dist * rnn_masks).sum() / rnn_masks.numel()  #/ sum_mask
+                    
+        self.train_result = (a_loss, c_loss, entropy, \
+            kl_dist, self.last_lr, lr_mul, \
+            mu.detach(), sigma.detach(), b_loss, _a_est_var)
+
+        # ==================================================
 
         self.e_clip = e_clip
-        
-        return ans
