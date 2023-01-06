@@ -6,10 +6,10 @@ params:
     MM_caching_frequency: 16
 
   algo:
-    name: a2c_continuous
+    name: grad_a2c_continuous
 
   model:
-    name: diff_continuous_a2c_logstd
+    name: continuous_a2c_logstd
 
   network:
     name: actor_critic
@@ -48,7 +48,7 @@ params:
     normalize_value: True
     reward_shaper:
       scale_value: 0.01
-    normalize_advantage: True
+    normalize_advantage: False
     gamma: 0.99
     tau: 0.95
     learning_rate: 3e-4
@@ -71,6 +71,11 @@ params:
     clip_value: True
     seq_len: 4
     bounds_loss_coef: 0.0001
+
+    # grad informed
+    gi_alpha: 0.1
+    gi_alpha_schedule: identity
+    gi_step_num: 1
     
     player:
       determenistic: True

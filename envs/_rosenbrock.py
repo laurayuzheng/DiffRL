@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 
 class RosenbrockEnv(DFlexEnv):
 
-    def __init__(self, render=False, device='cuda:0', num_envs=1024, seed=0, episode_length=1, no_grad=True, stochastic_init=False, MM_caching_frequency = 1, early_termination = False, dim=2):
+    def __init__(self, render=False, device='cuda:0', num_envs=1024, seed=0, episode_length=1, no_grad=True, stochastic_init=False, MM_caching_frequency = 1, early_termination = False, dim=16000):
 
         assert dim >= 2, "At least 2 dim"
 
@@ -110,14 +110,10 @@ class RosenbrockEnv(DFlexEnv):
 
     def evaluate(self, x: th.Tensor):
 
-        y = th.zeros((len(x),), device=x.device, dtype=x.dtype)
-        
-        for i in range(self.dim - 1):
+        xj = x[:, 1:]
+        xi = x[:, :-1]
 
-            xi = x[:, i]
-            xj = x[:, i + 1]
-
-            y = y + 100 * th.pow((xj - xi * xi), 2.0)
-            y = y + th.pow((1.0 - xi), 2.0)
+        y = th.sum(100 * th.pow(xj - xi * xi, 2.0), dim=1)
+        y = y + th.sum(th.pow(1.0 - xi, 2.0), dim=1)
 
         return -y
