@@ -1,3 +1,4 @@
+from math import floor
 from typing import List
 from rl_games.common import tr_helpers
 import time
@@ -36,6 +37,10 @@ class GradA2CAgent(A2CAgent):
 
         self.init_max_alpha(config)
 
+        # we have additional hyperparameter [gi_beta] that determines number of virtual actions;
+
+        self.init_beta(config)
+
         # we have additional hyperparameter [gi_step_num] that determines differentiable step size;
 
         self.gi_step_num = config.get('gi_step_num', 32)
@@ -54,16 +59,33 @@ class GradA2CAgent(A2CAgent):
         if gi_max_alpha_scheduler_type == 'identity':
             self.gi_max_alpha_scheduler = schedulers.IdentityScheduler()
         elif gi_max_alpha_scheduler_type == 'linear':
-            self.gi_max_alpha_scheduler = schedulers.LinearScheduler(self.gi_max_alpha, max_steps=self.max_epochs)
+            self.gi_max_alpha_scheduler = schedulers.LinearScheduler(self.gi_max_alpha, min_lr=0, max_steps=self.max_epochs)
         else:
             raise ValueError()
 
         self.gi_num_init_search = 32
 
+    def init_beta(self, config):
+
+        self.gi_beta = config.get('gi_beta', 4.0)
+        gi_beta_scheduler_type = config.get('gi_beta_schedule', 'linear')
+
+        if gi_beta_scheduler_type == 'identity':
+            self.gi_beta_scheduler = schedulers.IdentityScheduler()
+        elif gi_beta_scheduler_type == 'linear':
+            self.gi_beta_scheduler = schedulers.LinearScheduler(self.gi_beta, min_lr=0, max_steps=self.max_epochs)
+        else:
+            raise ValueError()
+
     def update_max_alpha(self):
 
         self.gi_max_alpha , _ = self.gi_max_alpha_scheduler.update(self.gi_max_alpha, None, self.epoch_num, 0, None)
         self.writer.add_scalar('info/gi_max_alpha', self.gi_max_alpha, self.epoch_num)
+
+    def update_beta(self):
+
+        self.gi_beta , _ = self.gi_beta_scheduler.update(self.gi_beta, None, self.epoch_num, 0, None)
+        self.writer.add_scalar('info/gi_beta', self.gi_beta, self.epoch_num)
 
     def init_alpha(self):
 
@@ -114,6 +136,91 @@ class GradA2CAgent(A2CAgent):
         self.dataset.values_dict['actions'] = actions
         self.dataset.values_dict['advantages'] = advantages
         self.dataset.values_dict['old_logp_actions'] = neglogp
+
+    def beta_sampling(self):
+
+        with torch.no_grad():
+
+            num_additional_info = floor(pow(self.gi_beta, self.actions_num))
+
+            if num_additional_info == 0:
+                return
+
+            model = self.model
+        
+            old_values: torch.Tensor = self.dataset.values_dict['old_values']
+            old_logp_actions: torch.Tensor = self.dataset.values_dict['old_logp_actions']
+            actions: torch.Tensor = self.dataset.values_dict['actions']
+            returns: torch.Tensor = self.dataset.values_dict['returns']
+            obs: torch.Tensor = self.dataset.values_dict['obs']
+            advantages: torch.Tensor = self.dataset.values_dict['advantages']
+            adv_grads: torch.Tensor = self.dataset.values_dict['adv_grads']
+            mu: torch.Tensor = self.dataset.values_dict['mu']
+            sigma: torch.Tensor = self.dataset.values_dict['sigma']
+            logstd = torch.log(sigma)
+            
+            # sample new actions using [mu] and [sigma];
+
+            base_old_values = old_values.repeat((num_additional_info, 1))
+            base_old_logp_actions = old_logp_actions.repeat((num_additional_info,))
+            base_actions = actions.repeat((num_additional_info, 1))
+            base_returns = returns.repeat((num_additional_info, 1))
+            base_obs = obs.repeat((num_additional_info, 1))
+            base_advantages = advantages.repeat((num_additional_info,))
+            base_adv_grads = adv_grads.repeat((num_additional_info, 1))
+            base_mu = mu.repeat((num_additional_info, 1))
+            base_sigma = sigma.repeat((num_additional_info, 1))
+            base_logstd = logstd.repeat((num_additional_info, 1))
+
+            # base_distr = torch.distributions.Normal(base_mu, base_sigma)
+
+            # additional_actions = base_distr.sample()
+            
+            # additional_old_logp_actions = model.neglogp(additional_actions, base_mu, base_sigma, base_logstd)
+
+            # additional_actions_diff = additional_actions - base_actions
+
+            additional_mu = torch.zeros_like(base_mu)
+            additional_sigma = torch.ones_like(base_sigma)
+            base_actions_size = torch.norm(base_actions, p=2, dim=1, keepdim=True)
+            additional_sigma *= base_actions_size
+
+            additional_distr = torch.distributions.Normal(additional_mu, additional_sigma)
+
+            additional_actions_diff = additional_distr.sample()
+
+            additional_actions = base_actions + additional_actions_diff
+
+            additional_old_logp_actions = model.neglogp(additional_actions, base_mu, base_sigma, base_logstd)
+
+            additional_advantages_diff = torch.matmul(additional_actions_diff.unsqueeze(-2), base_adv_grads.unsqueeze(-1))
+            additional_advantages = base_advantages + additional_advantages_diff.squeeze()
+
+            # concatenate additional info;
+
+            old_values = torch.cat([old_values, base_old_values])
+            old_logp_actions = torch.cat([old_logp_actions, additional_old_logp_actions])
+            actions = torch.cat([actions, additional_actions])
+            returns = torch.cat([returns, base_returns])
+            obs = torch.cat([obs, base_obs])
+            advantages = torch.cat([advantages, additional_advantages])
+            adv_grads = torch.cat([adv_grads, base_adv_grads])
+            mu = torch.cat([mu, base_mu])
+            sigma = torch.cat([sigma, base_sigma])
+
+            dataset_dict = {}
+            dataset_dict['old_values'] = old_values
+            dataset_dict['old_logp_actions'] = old_logp_actions
+            dataset_dict['advantages'] = advantages
+            dataset_dict['returns'] = returns
+            dataset_dict['actions'] = actions
+            dataset_dict['obs'] = obs
+            dataset_dict['rnn_states'] = self.dataset.values_dict['rnn_states']
+            dataset_dict['rnn_masks'] = self.dataset.values_dict['rnn_masks']
+            dataset_dict['mu'] = mu
+            dataset_dict['sigma'] = sigma
+
+            self.dataset.update_values_dict(dataset_dict)
 
     def init_tensors(self):
         
@@ -171,7 +278,11 @@ class GradA2CAgent(A2CAgent):
 
         # init alpha;
 
-        self.init_alpha()
+        # self.init_alpha()
+
+        # init beta;
+
+        self.beta_sampling()
 
         for _ in range(0, self.mini_epochs_num):
             ep_kls = []
@@ -211,7 +322,11 @@ class GradA2CAgent(A2CAgent):
 
         # update max alpha;
 
-        self.update_max_alpha()
+        # self.update_max_alpha()
+
+        # update beta;
+
+        self.update_beta()
 
         # log estimator variance;
 
@@ -454,17 +569,17 @@ class GradA2CAgent(A2CAgent):
 
             adv_grads = batch_dict['adv_grads']
 
-            adv_grads_size = torch.norm(adv_grads, p=2, dim=1)
-            actions_size = torch.clip(torch.norm(actions, p=2, dim=1), min=1e-6)
-            adv_grads_ratio = adv_grads_size / actions_size
-            mean_adv_grads_ratio = torch.mean(adv_grads_ratio).item()
+            # adv_grads_size = torch.norm(adv_grads, p=2, dim=1)
+            # actions_size = torch.clip(torch.norm(actions, p=2, dim=1), min=1e-6)
+            # adv_grads_ratio = adv_grads_size / actions_size
+            # mean_adv_grads_ratio = torch.mean(adv_grads_ratio).item()
 
-            self.writer.add_scalar("info/adv_grads_ratio", mean_adv_grads_ratio, self.epoch_num)
+            # self.writer.add_scalar("info/adv_grads_ratio", mean_adv_grads_ratio, self.epoch_num)
 
-            # make size of [adv_grads] rougly equal to [actions];
+            # # make size of [adv_grads] rougly equal to [actions];
 
-            adv_grads_multiplier = 1.0 / max(mean_adv_grads_ratio, 1e-6)
-            adv_grads *= adv_grads_multiplier
+            # adv_grads_multiplier = 1.0 / max(mean_adv_grads_ratio, 1e-6)
+            # adv_grads *= adv_grads_multiplier
 
         # perturb [actions] and [advantages] using [adv_grads];
 
