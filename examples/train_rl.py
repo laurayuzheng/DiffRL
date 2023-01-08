@@ -146,7 +146,7 @@ def get_args(): # TODO: delve into the arguments
         {"name": "--logdir", "type": str, "default": "logs/tmp/rl/"},
         {"name": "--no-time-stamp", "action": "store_true", "default": False,
             "help": "whether not add time stamp at the log path"},
-        {"name": "--gi_alpha", "type": float, "default": 0.1}]
+        {"name": "--gi_max_alpha", "type": float, "default": 0.1}]
 
     # parse arguments
     args = parse_arguments(
@@ -174,7 +174,7 @@ if __name__ == '__main__':
         cfg_train["params"]["config"]["num_actors"] = args.num_envs
 
     # alpha
-    cfg_train["params"]["config"]["gi_alpha"] = args.gi_alpha
+    cfg_train["params"]["config"]["gi_max_alpha"] = args.gi_max_alpha
         
     vargs = vars(args)
     

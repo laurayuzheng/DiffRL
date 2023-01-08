@@ -64,8 +64,8 @@ params:
     truncate_grads: True
     e_clip: 0.2
     steps_num: 240        
-    num_actors: 1 # 32
-    minibatch_size: 240 # 1920
+    num_actors: 32
+    minibatch_size: 1920
     mini_epochs: 5
     critic_coef: 4
     clip_value: True
@@ -73,8 +73,8 @@ params:
     bounds_loss_coef: 0.0001
 
     # grad informed
-    gi_alpha: 1.0
-    gi_alpha_schedule: identity
+    gi_max_alpha: 0.1
+    gi_max_alpha_schedule: identity
     gi_step_num: 32
     
     player:

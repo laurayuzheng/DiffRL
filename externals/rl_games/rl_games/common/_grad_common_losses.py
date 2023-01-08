@@ -7,10 +7,10 @@ def alpha_variance_loss(actions, advantages, adv_grads, model, old_mu, old_sigma
     Compute variance of (alpha-policy) estimator.
     '''
 
-    adv_grads_norm = torch.pow(torch.norm(adv_grads, p=2, dim=1, keepdim=True), 2.0)
+    adv_grads_norm = torch.pow(torch.norm(adv_grads, p=2, dim=1), 2.0)
     
     p_actions = actions + (adv_grads * alpha)
-    p_advantages = advantages + (adv_grads * alpha)
+    p_advantages = advantages + (adv_grads_norm * alpha)
 
     # compute probabilities of [p_actions];
 

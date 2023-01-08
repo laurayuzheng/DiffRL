@@ -64,8 +64,8 @@ params:
     truncate_grads: True
     e_clip: 0.2
     steps_num: 1
-    num_actors: 128
-    minibatch_size: 128
+    num_actors: 2048
+    minibatch_size: 2048
     mini_epochs: 5
     critic_coef: 4
     clip_value: True
@@ -77,8 +77,8 @@ params:
     summaries_interval_sec_max: 0.002
 
     # grad informed
-    gi_alpha: 0.0
-    gi_alpha_schedule: identity
+    gi_max_alpha: 0.1
+    gi_max_alpha_schedule: identity
     gi_step_num: 1
     
     player:
