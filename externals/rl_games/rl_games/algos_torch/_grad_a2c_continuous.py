@@ -461,11 +461,10 @@ class GradA2CAgent(A2CAgent):
 
             self.writer.add_scalar("info/adv_grads_ratio", mean_adv_grads_ratio, self.epoch_num)
 
-            curr_gi_max_alpha = self.gi_max_alpha / max(mean_adv_grads_ratio, 1e-6)
+            # make size of [adv_grads] rougly equal to [actions];
 
-            self.writer.add_scalar("info/curr_max_alpha", curr_gi_max_alpha, self.epoch_num)
-
-            adv_grads *= curr_gi_max_alpha
+            adv_grads_multiplier = 1.0 / max(mean_adv_grads_ratio, 1e-6)
+            adv_grads *= adv_grads_multiplier
 
         # perturb [actions] and [advantages] using [adv_grads];
 
