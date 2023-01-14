@@ -339,13 +339,6 @@ class GradA2CAgent(A2CAgent):
                 self.obs = self.vec_env.env.initialize_trajectory()
                 self.obs = self.obs_to_tensors(self.obs)
                 grad_start[n, :] = 1.0
-
-                grad_obses.clear()
-                grad_values.clear()
-                grad_next_values.clear()
-                grad_actions.clear()
-                grad_rewards.clear()
-                grad_fdones.clear()
             else:
                 grad_start[n, :] = self.dones
 
@@ -355,12 +348,12 @@ class GradA2CAgent(A2CAgent):
             else:
                 res_dict = self.get_action_values(self.obs)
 
-            # we store tensor objects with gradients right into buffer;
+            # we store tensor objects with gradients;
             grad_obses.append(res_dict['obs'])
             grad_values.append(res_dict['values'])
             grad_actions.append(res_dict['actions'])
             grad_fdones.append(self.dones.float())
-
+    
             # [obs] is an observation of the current time step;
             # store processed obs, which might have been normalized already;
             self.experience_buffer.update_data('obses', n, res_dict['obs'])
@@ -444,27 +437,39 @@ class GradA2CAgent(A2CAgent):
                 (This scheme is borrowed from SHAC)
                 '''
 
+                # start and end of current subsequence;
+
+                n0 = (n // self.gi_num_step) * self.gi_num_step
+                n1 = n + 1
+
+                last_fdones = self.dones.float()
+
+                curr_grad_obses = grad_obses[n0:n1]
+                curr_grad_values = grad_values[n0:n1]
+                curr_grad_next_values = grad_next_values[n0:n1]
+                curr_grad_rewards = grad_rewards[n0:n1]
+                curr_grad_start = grad_start[n0:n1]
+                curr_grad_fdones = grad_fdones[n0:n1]
+
                 # update actor;
 
                 if True:
 
                     # compute loss for actor network and update;
                     # this equals to GAE(1) of the first term;
-                    grad_advs = self.grad_advantages(1.0, 
-                                                        grad_values, 
-                                                        grad_next_values,
-                                                        grad_rewards)
+                    curr_grad_advs = self.grad_advantages(1.0, 
+                                                        curr_grad_values, 
+                                                        curr_grad_next_values,
+                                                        curr_grad_rewards,
+                                                        curr_grad_fdones,
+                                                        last_fdones)
                     
                     # add value of the states;
-                    for i in range(len(grad_values)):
-                        grad_advs[i] = grad_advs[i] + grad_values[i]
+                    for i in range(len(curr_grad_values)):
+                        curr_grad_advs[i] = curr_grad_advs[i] + curr_grad_values[i]
 
-                    beg_n = (n // self.gi_num_step) * self.gi_num_step
-                    end_n = n + 1
-
-                    curr_grad_start = grad_start[beg_n:end_n]
-                    actor_loss: torch.Tensor = -self.grad_advantages_first_terms_sum(grad_advs, curr_grad_start)
-                    actor_loss = actor_loss / ((end_n - beg_n) * self.num_actors)
+                    actor_loss: torch.Tensor = -self.grad_advantages_first_terms_sum(curr_grad_advs, curr_grad_start)
+                    actor_loss = actor_loss / ((n1 - n0) * self.num_actors)
 
                     # update actor;
                     self.actor_optimizer.zero_grad()
@@ -472,7 +477,7 @@ class GradA2CAgent(A2CAgent):
                     grad_norm_before_clip = tu.grad_norm(self.actor.parameters())
                     if self.truncate_grads:
                         torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.grad_norm)    
-                    self.grad_norm_after_clip = tu.grad_norm(self.actor.parameters()) 
+                    grad_norm_after_clip = tu.grad_norm(self.actor.parameters()) 
 
                     self.actor_optimizer.step()
                     # print('actor , grad norm before clip = {:7.6f}'.format(grad_norm_before_clip.detach().cpu().item()))
@@ -483,17 +488,19 @@ class GradA2CAgent(A2CAgent):
 
                     # compute advantage and add it to state value to get target values;
                     with torch.no_grad():
-                        grad_advs = self.grad_advantages(self.tau,
-                                                            grad_values,
-                                                            grad_next_values, 
-                                                            grad_rewards)
+                        curr_grad_advs = self.grad_advantages(self.tau,
+                                                                curr_grad_values,
+                                                                curr_grad_next_values, 
+                                                                curr_grad_rewards,
+                                                                curr_grad_fdones,
+                                                                last_fdones)
 
                         target_values = []
-                        for i in range(len(grad_advs)):
-                            target_values.append(grad_advs[i] + grad_values[i])
+                        for i in range(len(curr_grad_advs)):
+                            target_values.append(curr_grad_advs[i] + curr_grad_values[i])
 
                         # batchify;    
-                        th_obs = torch.cat(grad_obses, dim=0)
+                        th_obs = torch.cat(curr_grad_obses, dim=0)
                         th_target_values = torch.cat(target_values, dim=0)
                         batch_size = len(th_target_values) // self.critic_num_batch
                         critic_dataset = CriticDataset(batch_size, th_obs, th_target_values)
@@ -541,17 +548,37 @@ class GradA2CAgent(A2CAgent):
                             param_targ.data.mul_(alpha)
                             param_targ.data.add_((1. - alpha) * param.data)
 
-        
+        # compute advantages that would be used for RL update;
+        last_fdones = self.dones.float()
 
+        grad_advs = self.grad_advantages(self.tau,
+                                            grad_values,
+                                            grad_next_values, 
+                                            grad_rewards,
+                                            grad_fdones,
+                                            last_fdones,)
+
+        # compute gradient of advantages above for computing alpha policy;
+        grad_adv_grads = self.advantage_gradients_gae(grad_actions, 
+                                                        grad_advs, 
+                                                        grad_start)
+
+        self.experience_buffer.tensor_dict['adv_grads'] = grad_adv_grads
         self.clear_experience_buffer_grads()
 
-        batch_dict = {}
-        batch_dict['played_frames'] = self.batch_size
-        batch_dict['step_time'] = step_time
+        with torch.no_grad():
+
+            batch_dict = self.experience_buffer.get_transformed_list(swap_and_flatten01, self.tensor_list)
+
+            for i in range(len(grad_advs)):
+                grad_advs[i] = grad_advs[i].unsqueeze(0)
+            batch_dict['advantages'] = torch.cat(grad_advs, dim=0)
+            batch_dict['played_frames'] = self.batch_size
+            batch_dict['step_time'] = step_time
 
         return batch_dict
 
-    def grad_advantages(self, gae_tau, mb_extrinsic_values, mb_next_extrinsic_values, mb_rewards):
+    def grad_advantages(self, gae_tau, mb_extrinsic_values, mb_next_extrinsic_values, mb_rewards, mb_fdones, last_fdones):
 
         num_step = len(mb_extrinsic_values)
         mb_advs = []
@@ -561,10 +588,16 @@ class GradA2CAgent(A2CAgent):
         lastgaelam = 0
 
         for t in reversed(range(num_step)):
+            if t == num_step - 1:
+                nextnonterminal = 1.0 - last_fdones
+            else:
+                nextnonterminal = 1.0 - mb_fdones[t+1]
+            nextnonterminal = nextnonterminal.unsqueeze(1)
+
             nextvalues = mb_next_extrinsic_values[t]
 
             delta = mb_rewards[t] + self.gamma * nextvalues - mb_extrinsic_values[t]
-            mb_adv = lastgaelam = delta + self.gamma * gae_tau * lastgaelam
+            mb_adv = lastgaelam = delta + self.gamma * gae_tau * nextnonterminal * lastgaelam
             mb_advs.append(mb_adv)
 
         mb_advs.reverse()
@@ -584,29 +617,25 @@ class GradA2CAgent(A2CAgent):
 
         return adv_sum
 
-
     def advantage_gradients_gae(self, mb_actions, mb_advs, grad_start):
 
         '''
         Compute advantage gradients, of which size equals to (# timestep, # actors, # action size).
         '''
 
-        num_timestep = grad_start.shape[0]
-        num_actors = grad_start.shape[1]
-
-        adv_sum = 0
-
-        for i in range(num_timestep):
-            for j in range(num_actors):
-                if grad_start[i, j]:
-                    adv_sum = adv_sum + mb_advs[i][j]
+        adv_sum = self.grad_advantages_first_terms_sum(mb_advs, grad_start)
 
         # compute gradients;
 
+        for action in mb_actions:
+            action.grad = None
         adv_sum.backward()
 
         adv_grads = torch.zeros_like(self.experience_buffer.tensor_dict['actions'])
 
+        num_timestep = grad_start.shape[0]
+        num_actors = grad_start.shape[1]
+        
         for i in range(num_timestep):
             adv_grads[i] = mb_actions[i].grad
 
@@ -649,7 +678,7 @@ class GradA2CAgent(A2CAgent):
 
     def prepare_dataset(self, batch_dict):
         obses = batch_dict['obses']
-        returns = batch_dict['returns']
+        advantages = batch_dict['advantages']
         dones = batch_dict['dones']
         values = batch_dict['values']
         actions = batch_dict['actions']
@@ -659,16 +688,10 @@ class GradA2CAgent(A2CAgent):
         rnn_states = batch_dict.get('rnn_states', None)
         rnn_masks = batch_dict.get('rnn_masks', None)
 
-        advantages = returns - values
-
         if self.normalize_value:
-            values = self.value_mean_std(values)
-            returns = self.value_mean_std(returns)
-
-        # adjust [max_alpha] according to grad size and set proper grad size;
-
+            raise NotImplementedError()
+            
         with torch.no_grad():
-
             adv_grads = batch_dict['adv_grads']
 
         advantages = torch.sum(advantages, axis=1)
@@ -684,7 +707,6 @@ class GradA2CAgent(A2CAgent):
         dataset_dict['old_values'] = values
         dataset_dict['old_logp_actions'] = neglogpacs
         dataset_dict['advantages'] = advantages
-        dataset_dict['returns'] = returns
         dataset_dict['actions'] = actions
         dataset_dict['obs'] = obses
         dataset_dict['rnn_states'] = rnn_states
