@@ -1,10 +1,9 @@
-from math import floor
 from typing import List
 from rl_games.common import tr_helpers
 import time
 
 import torch 
-from torch import clamp, nn
+from torch import nn
 import numpy as np
 import gym
 
@@ -17,25 +16,71 @@ from rl_games.algos_torch._grad_running_mean_std import GradRunningMeanStd
 from rl_games.common import schedulers
 from rl_games.common import common_losses, _grad_common_losses
 
-# alpha selection strategies;
-
-ALPHA_SELECT_LEAST_VARIANCE = 0
-ALPHA_SELECT_WORST_MEAN = 1
-ALPHA_SELECT_BEST_MEAN = 2 #
-ALPHA_SELECT_WORST_LOWER_BOUND = 3 #
-ALPHA_SELECT_BEST_LOWER_BOUND = 4
-ALPHA_SELECT_WORST_UPPER_BOUND = 5
-ALPHA_SELECT_BEST_UPPER_BOUND = 6 #
-
-ALPHA_SELECT_MAX_VARIANCE = 7
-ALPHA_SELECT_MAX_ALPHA = 8
+from utils.dataset import CriticDataset
+import models.actor
+import models.critic
+import copy
+import utils.torch_utils as tu
+import utils.common
 
 class GradA2CAgent(A2CAgent):
     def __init__(self, base_name, config):
         
         super().__init__(base_name, config)
 
-        # change to proper running mean std;
+        utils.common.seeding(config["gi_params"]["seed"])
+
+        # unsupported settings;
+
+        if self.use_action_masks or \
+            self.has_central_value or \
+            self.has_self_play_config or \
+            self.self_play or \
+            self.rnn_states or \
+            self.has_phasic_policy_gradients or \
+            isinstance(self.observation_space, gym.spaces.Dict):
+
+            raise NotImplementedError()
+
+        # change models: here we use seperate actor & critic network;
+        
+        num_obs = self.obs_shape[0]
+        num_actions = self.actions_num
+
+        self.actor_name = config["gi_params"]["network"].get("actor", 'ActorStochasticMLP')     # choices: ['ActorDeterministicMLP', 'ActorStochasticMLP']
+        self.critic_name = config["gi_params"]["network"].get("critic", 'CriticMLP')
+        
+        actor_fn = getattr(models.actor, self.actor_name)
+        self.actor: torch.nn.Module = actor_fn(num_obs, num_actions, config['gi_params']['network'], device = self.ppo_device)
+        
+        critic_fn = getattr(models.critic, self.critic_name)
+        self.critic: torch.nn.Module = critic_fn(num_obs, config['gi_params']['network'], device = self.ppo_device)
+        
+        self.all_params = list(self.actor.parameters()) + list(self.critic.parameters())
+        self.target_critic = copy.deepcopy(self.critic)
+        self.target_critic_alpha = config['gi_params'].get('target_critic_alpha', 0.4)
+    
+        # initialize optimizer;
+
+        self.actor_lr = float(config['gi_params']["actor_learning_rate"])
+        self.critic_lr = float(config['gi_params']["critic_learning_rate"])
+        
+        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), betas = config['gi_params']['betas'], lr = self.actor_lr)
+        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), betas = config['gi_params']['betas'], lr = self.critic_lr)
+
+        self.critic_iterations = config['gi_params']["critic_iterations"]
+        self.critic_num_batch = config['gi_params']["critic_num_batch"]
+
+        # we have additional hyperparameter [gi_step_num] that determines differentiable step size;
+        # this step size is also used for policy update based on analytical policy gradients;
+        self.gi_num_step = config['gi_params']['num_step']
+
+        # initialize ppo optimizer;
+
+        self.ppo_last_lr = self.last_lr
+        self.ppo_optimizer = torch.optim.Adam(self.actor.parameters(), lr=self.ppo_last_lr, eps=1e-8, weight_decay=self.weight_decay)
+
+        # change to proper running mean std for backpropagation;
 
         if self.normalize_input:
             if isinstance(self.observation_space, gym.spaces.Dict):
@@ -44,335 +89,16 @@ class GradA2CAgent(A2CAgent):
                 self.running_mean_std = GradRunningMeanStd(self.obs_shape).to(self.ppo_device)
 
         if self.normalize_value:
+            raise NotImplementedError()
             self.value_mean_std = GradRunningMeanStd((1,)).to(self.ppo_device)
 
-        # we have additional hyperparameter [gi_alpha] that determines gradient size;
+        # we have additional hyperparameter [gi_alpha] that determines alpha-policy;
 
         self.init_max_alpha(config)
 
-        # we have additional hyperparameter [gi_beta] that determines number of virtual actions;
+        # episode length;
+        self.episode_max_length = self.vec_env.env.episode_length
 
-        self.init_beta(config)
-
-        # we have additional hyperparameter [gi_step_num] that determines differentiable step size;
-
-        self.gi_step_num = config.get('gi_step_num', 32)
-
-        # disable some options for now...
-
-        assert not self.has_central_value, "Not supported yet"
-        assert not 'phasic_policy_gradients' in self.config, "Not supported yet"
-
-    def init_max_alpha(self, config):
-
-        self.gi_alpha = 0.0
-        self.gi_max_alpha: float = config.get('gi_max_alpha', 0.1)
-        gi_max_alpha_scheduler_type = config.get('gi_max_alpha_schedule', 'identity')
-        self.gi_alpha_strategy: int = config.get('gi_alpha_strategy', 0)
-
-        if gi_max_alpha_scheduler_type == 'identity':
-            self.gi_max_alpha_scheduler = schedulers.IdentityScheduler()
-        elif gi_max_alpha_scheduler_type == 'linear':
-            self.gi_max_alpha_scheduler = schedulers.LinearScheduler(self.gi_max_alpha, min_lr=0, max_steps=self.max_epochs)
-        else:
-            raise ValueError()
-
-        self.gi_num_init_search = 32
-
-    def init_beta(self, config):
-
-        self.gi_beta = config.get('gi_beta', 4.0)
-        gi_beta_scheduler_type = config.get('gi_beta_schedule', 'linear')
-
-        if gi_beta_scheduler_type == 'identity':
-            self.gi_beta_scheduler = schedulers.IdentityScheduler()
-        elif gi_beta_scheduler_type == 'linear':
-            self.gi_beta_scheduler = schedulers.LinearScheduler(self.gi_beta, min_lr=0, max_steps=self.max_epochs)
-        else:
-            raise ValueError()
-
-    def update_max_alpha(self):
-
-        self.gi_max_alpha , _ = self.gi_max_alpha_scheduler.update(self.gi_max_alpha, None, self.epoch_num, 0, None)
-        self.writer.add_scalar('info/gi_max_alpha', self.gi_max_alpha, self.epoch_num)
-
-    def update_beta(self):
-
-        self.gi_beta , _ = self.gi_beta_scheduler.update(self.gi_beta, None, self.epoch_num, 0, None)
-        self.writer.add_scalar('info/gi_beta', self.gi_beta, self.epoch_num)
-
-    def update_alpha_dataset(self, old_mu, old_sigma, alpha):
-
-        actions = self.dataset.values_dict['actions']
-        advantages = self.dataset.values_dict['advantages']
-        adv_grads = self.dataset.values_dict['adv_grads']
-        model = self.model
-
-        # update data;
-
-        adv_grads_norm = torch.pow(torch.norm(adv_grads, p=2, dim=1), 2.0)
-        old_logstd = torch.log(old_sigma)
-
-        p_actions = actions + (adv_grads * self.gi_alpha)
-        p_advantages = advantages + (adv_grads_norm * self.gi_alpha)
-
-        # [initial_ratio] must be literally equal to the ratio at the first iteration;
-        p_old_neglogp = model.neglogp(p_actions, old_mu, old_sigma, old_logstd)
-        old_neglogp = self.dataset.values_dict['old_logp_actions']
-        initial_ratio = torch.exp(old_neglogp - p_old_neglogp)
-
-        self.dataset.values_dict['actions'] = p_actions
-        self.dataset.values_dict['advantages'] = p_advantages
-        self.dataset.values_dict['initial_ratio'] = initial_ratio
-
-    def alpha_target(self, curr_mean, curr_var, curr_alpha):
-
-        curr_std = torch.sqrt(curr_var)
-
-        if self.gi_alpha_strategy == 0:
-            # least variance;
-            curr_target = curr_var
-        elif self.gi_alpha_strategy == 1:
-            # worst mean;
-            curr_target = curr_mean
-        elif self.gi_alpha_strategy == 2:
-            # best mean;
-            curr_target = -curr_mean
-        elif self.gi_alpha_strategy == 3:
-            # worst lower bound;
-            curr_target = curr_mean - curr_std
-        elif self.gi_alpha_strategy == 4:
-            # best lower bound;
-            curr_target = -(curr_mean - curr_std)
-        elif self.gi_alpha_strategy == 5:
-            # worst upper bound;
-            curr_target = curr_mean + curr_std
-        elif self.gi_alpha_strategy == 6:
-            # best upper bound;
-            curr_target = -(curr_mean + curr_std)
-        elif self.gi_alpha_strategy == 7:
-            # max variance;
-            curr_target = -curr_std
-        elif self.gi_alpha_strategy == 8:
-            # max alpha;
-            curr_target = -curr_alpha
-        else:
-            raise ValueError()
-
-        return curr_target
-
-    def init_alpha(self, old_mu, old_sigma):
-
-        if self.gi_max_alpha == 0:
-            
-            self.gi_alpha = 0
-            return
-
-        alphas: List[float] = np.arange(-self.gi_max_alpha, 
-                                        self.gi_max_alpha, 
-                                        (2.0 * self.gi_max_alpha / self.gi_num_init_search)).tolist()
-        alphas.append(self.gi_max_alpha)
-        alphas.append(0.0)
-
-        actions = self.dataset.values_dict['actions']
-        advantages = self.dataset.values_dict['advantages']
-        adv_grads = self.dataset.values_dict['adv_grads']
-        model = self.model
-
-        with torch.no_grad():
-
-            obs_batch = self.dataset.values_dict['obs']
-            obs_batch = self._preproc_obs(obs_batch)
-
-            batch_dict = {
-                'is_train': False,
-                'prev_actions': None, 
-                'obs' : obs_batch,
-            }
-
-            res_dict = model(batch_dict)
-
-            # this must be equal to the [old_mu] and [old_sigma]
-            # if it is the first iteration;
-            curr_mu = res_dict['mus']
-            curr_sigma = res_dict['sigmas']
-
-        # objective for determining good alpha;
-        target = -1
-
-        for alpha in alphas:
-
-            # curr_var = _grad_common_losses.alpha_variance_loss(actions, advantages, adv_grads, model, old_mu, old_sigma, curr_mu, curr_sigma, alpha)
-            curr_mean, curr_var = _grad_common_losses.alpha_policy_loss(actions,
-                                                                        advantages,
-                                                                        adv_grads,
-                                                                        model,
-                                                                        old_mu,
-                                                                        old_sigma,
-                                                                        curr_mu,
-                                                                        curr_sigma,
-                                                                        alpha)
-
-            curr_target = self.alpha_target(curr_mean, curr_var, alpha)
-            
-            if target < 0 or curr_target < target:
-
-                target = curr_target
-                self.gi_alpha = alpha
-
-        self.update_alpha_dataset(old_mu, old_sigma, self.gi_alpha)
-
-    def update_alpha(self, old_mu, old_sigma):
-
-        if self.gi_max_alpha == 0:
-            
-            self.gi_alpha = 0
-            return
-
-        if self.gi_alpha_strategy == 8:
-
-            self.gi_alpha = self.gi_max_alpha
-
-        else:
-
-            actions = self.dataset.values_dict['actions']
-            advantages = self.dataset.values_dict['advantages']
-            adv_grads = self.dataset.values_dict['adv_grads']
-            model = self.model
-
-            # start from current [alpha];
-            alpha = torch.tensor([self.gi_alpha], device=self.ppo_device, requires_grad=True)
-            optimizer = torch.optim.Adam([alpha], lr=1e-3)
-
-            with torch.no_grad():
-
-                obs_batch = self.dataset.values_dict['obs']
-                obs_batch = self._preproc_obs(obs_batch)
-
-                batch_dict = {
-                    'is_train': False,
-                    'prev_actions': None, 
-                    'obs' : obs_batch,
-                }
-
-                res_dict = model(batch_dict)
-
-                # this must be equal to the [old_mu] and [old_sigma]
-                # if it is the first iteration;
-                curr_mu = res_dict['mus']
-                curr_sigma = res_dict['sigmas']
-
-            for _ in range(16):
-
-                curr_mean, curr_var = _grad_common_losses.alpha_policy_loss(actions,
-                                                                advantages,
-                                                                adv_grads,
-                                                                model,
-                                                                old_mu,
-                                                                old_sigma,
-                                                                curr_mu,
-                                                                curr_sigma,
-                                                                alpha)
-
-                curr_target = self.alpha_target(curr_mean, curr_var, alpha)
-
-                optimizer.zero_grad()
-                curr_target.backward()
-                optimizer.step()
-
-            self.gi_alpha = alpha.item()
-            self.gi_alpha = min(self.gi_alpha, self.gi_max_alpha)
-            self.gi_alpha = max(self.gi_alpha, -self.gi_max_alpha)
-
-        self.update_alpha_dataset(old_mu, old_sigma, self.gi_alpha)
-
-    
-    
-
-    def beta_sampling(self):
-
-        with torch.no_grad():
-
-            num_additional_info = floor(pow(self.gi_beta, self.actions_num))
-
-            if num_additional_info == 0:
-                return
-
-            model = self.model
-        
-            old_values: torch.Tensor = self.dataset.values_dict['old_values']
-            old_logp_actions: torch.Tensor = self.dataset.values_dict['old_logp_actions']
-            actions: torch.Tensor = self.dataset.values_dict['actions']
-            returns: torch.Tensor = self.dataset.values_dict['returns']
-            obs: torch.Tensor = self.dataset.values_dict['obs']
-            advantages: torch.Tensor = self.dataset.values_dict['advantages']
-            adv_grads: torch.Tensor = self.dataset.values_dict['adv_grads']
-            mu: torch.Tensor = self.dataset.values_dict['mu']
-            sigma: torch.Tensor = self.dataset.values_dict['sigma']
-            logstd = torch.log(sigma)
-            
-            # sample new actions using [mu] and [sigma];
-
-            base_old_values = old_values.repeat((num_additional_info, 1))
-            base_old_logp_actions = old_logp_actions.repeat((num_additional_info,))
-            base_actions = actions.repeat((num_additional_info, 1))
-            base_returns = returns.repeat((num_additional_info, 1))
-            base_obs = obs.repeat((num_additional_info, 1))
-            base_advantages = advantages.repeat((num_additional_info,))
-            base_adv_grads = adv_grads.repeat((num_additional_info, 1))
-            base_mu = mu.repeat((num_additional_info, 1))
-            base_sigma = sigma.repeat((num_additional_info, 1))
-            base_logstd = logstd.repeat((num_additional_info, 1))
-
-            # base_distr = torch.distributions.Normal(base_mu, base_sigma)
-
-            # additional_actions = base_distr.sample()
-            
-            # additional_old_logp_actions = model.neglogp(additional_actions, base_mu, base_sigma, base_logstd)
-
-            # additional_actions_diff = additional_actions - base_actions
-
-            additional_mu = torch.zeros_like(base_mu)
-            additional_sigma = torch.ones_like(base_sigma)
-            base_actions_size = torch.norm(base_actions, p=2, dim=1, keepdim=True)
-            additional_sigma *= base_actions_size
-
-            additional_distr = torch.distributions.Normal(additional_mu, additional_sigma)
-
-            additional_actions_diff = additional_distr.sample()
-
-            additional_actions = base_actions + additional_actions_diff
-
-            additional_old_logp_actions = model.neglogp(additional_actions, base_mu, base_sigma, base_logstd)
-
-            additional_advantages_diff = torch.matmul(additional_actions_diff.unsqueeze(-2), base_adv_grads.unsqueeze(-1))
-            additional_advantages = base_advantages + additional_advantages_diff.squeeze()
-
-            # concatenate additional info;
-
-            old_values = torch.cat([old_values, base_old_values])
-            old_logp_actions = torch.cat([old_logp_actions, additional_old_logp_actions])
-            actions = torch.cat([actions, additional_actions])
-            returns = torch.cat([returns, base_returns])
-            obs = torch.cat([obs, base_obs])
-            advantages = torch.cat([advantages, additional_advantages])
-            adv_grads = torch.cat([adv_grads, base_adv_grads])
-            mu = torch.cat([mu, base_mu])
-            sigma = torch.cat([sigma, base_sigma])
-
-            dataset_dict = {}
-            dataset_dict['old_values'] = old_values
-            dataset_dict['old_logp_actions'] = old_logp_actions
-            dataset_dict['advantages'] = advantages
-            dataset_dict['returns'] = returns
-            dataset_dict['actions'] = actions
-            dataset_dict['obs'] = obs
-            dataset_dict['rnn_states'] = self.dataset.values_dict['rnn_states']
-            dataset_dict['rnn_masks'] = self.dataset.values_dict['rnn_masks']
-            dataset_dict['mu'] = mu
-            dataset_dict['sigma'] = sigma
-
-            self.dataset.update_values_dict(dataset_dict)
 
     def init_tensors(self):
         
@@ -392,11 +118,15 @@ class GradA2CAgent(A2CAgent):
         # add advantage grad;
         self.tensor_list = self.tensor_list + ['adv_grads']
 
+    def init_max_alpha(self, config):
+
+        self.gi_alpha_num_search = 32
+        self.gi_max_alpha: float = config['gi_params'].get('max_alpha', 0.1)
+        
     def train_epoch(self):
 
         A2CBase.train_epoch(self)
 
-        self.set_eval()
         play_time_start = time.time()
         
         if self.is_rnn:
@@ -408,19 +138,20 @@ class GradA2CAgent(A2CAgent):
         update_time_start = time.time()
         rnn_masks = batch_dict.get('rnn_masks', None)
 
-        self.set_train()
         self.curr_frames = batch_dict.pop('played_frames')
-        self.prepare_dataset(batch_dict)
-        self.algo_observer.after_steps()
+        # self.prepare_dataset(batch_dict)
+        # self.algo_observer.after_steps()
 
         if self.has_central_value:
             raise NotImplementedError()
 
-        a_losses = []
-        c_losses = []
-        b_losses = []
-        entropies = []
-        kls = []
+        a_losses = [torch.ones([1,], device=self.ppo_device)]
+        c_losses = [torch.ones([1,], device=self.ppo_device)]
+        b_losses = [torch.ones([1,], device=self.ppo_device)]
+        entropies = [torch.ones([1,], device=self.ppo_device)]
+        kls = [torch.ones([1,], device=self.ppo_device)]
+
+        return batch_dict['step_time'], play_time_end - play_time_start, 1, 1, a_losses, c_losses, b_losses, entropies, kls, 1, 1
 
         # estimator variances;
         a_est_vars = []
@@ -507,48 +238,85 @@ class GradA2CAgent(A2CAgent):
 
         return batch_dict['step_time'], play_time, update_time, total_time, a_losses, c_losses, b_losses, entropies, kls, last_lr, lr_mul
 
+    def neglogp(self, x, mean, std, logstd):
+
+        assert x.ndim == 2 and mean.ndim == 2 and std.ndim == 2 and logstd.ndim == 2, ""
+        assert x.shape[0] == mean.shape[0] and x.shape[0] == std.shape[0] and x.shape[0] == logstd.shape[0], ""
+
+        return 0.5 * (((x - mean) / std)**2).sum(dim=-1) \
+            + 0.5 * np.log(2.0 * np.pi) * x.size()[-1] \
+            + logstd.sum(dim=-1)
 
     def get_action_values(self, obs):
-        processed_obs = self._preproc_obs(obs['obs'])
-        self.model.eval()
-        input_dict = {
-            'is_train': False,
-            'prev_actions': None, 
-            'obs' : processed_obs,
-            'rnn_states' : self.rnn_states
-        }
-
-        # grad should flow here because there is state value in [res_dict];
-        res_dict = self.model(input_dict)
         
-        assert res_dict['rnn_states'] == None, "Not supported yet"
+        # normalize input if needed, we update rms only here;
+        processed_obs = obs['obs']
+        if self.normalize_input:
+            self.running_mean_std.train()
+            processed_obs = self.running_mean_std(obs['obs'])
+        
+        # [std] is a vector of length [action_dim], which is shared by all the envs;
+        actions, mu, std = self.actor.forward_with_dist(processed_obs, deterministic=False)
+        if std.ndim == 1:
+            std = std.unsqueeze(0)                      
+            std = std.expand(actions.shape[0], -1)      # make size of [std] same as [actions] and [mu];
+        neglogp = self.neglogp(actions, mu, std, torch.log(std))
+
+        # self.target_critic.eval()
+        values = self.target_critic(processed_obs)
+        
+        # assert res_dict['rnn_states'] == None, "Not supported yet"
         assert not self.has_central_value, "Not supported yet"
 
         if self.normalize_value:
-            res_dict['values'] = self.value_mean_std(res_dict['values'], True)
+            raise NotImplementedError()
+
+        res_dict = {
+            "obs": processed_obs,
+            "actions": actions,
+            "mus": mu,
+            "sigmas": std,
+            "neglogpacs": neglogp,
+            "values": values,
+            "rnn_states": None,
+        }
+
         return res_dict
 
-    def get_values(self, obs):
-        # grad should flow;
-        if self.has_central_value:
-            raise NotImplementedError()
+    def get_critic_values(self, obs, use_target_critic: bool, obs_rms_train: bool):
+
+        if use_target_critic:   
+            critic = self.target_critic
+            # critic.eval()
         else:
-            self.model.eval()
-            processed_obs = self._preproc_obs(obs['obs'])
-            input_dict = {
-                'is_train': False,
-                'prev_actions': None, 
-                'obs' : processed_obs,
-                'rnn_states' : self.rnn_states
-            }
-            result = self.model(input_dict)
-            value = result['values']
+            critic = self.critic
+
+        if self.normalize_input:
+
+            if obs_rms_train:
+                self.running_mean_std.train()
+            else:
+                self.running_mean_std.eval()
+
+        processed_obs = self._preproc_obs(obs)
+        values = critic(processed_obs)
 
         if self.normalize_value:
-            value = self.value_mean_std(value, True)
-        return value
+            values = self.value_mean_std(values, True)
+
+        return values
+
+    def preprocess_actions(self, actions):
+        if not self.is_tensor_obses:
+            actions = actions.cpu().numpy()
+        return actions
 
     def play_steps(self):
+
+        '''
+        Unlike PPO, here we conduct several actor & critic network updates using gradient descent. 
+        '''
+
         epinfos = []
         update_list = self.update_list
 
@@ -556,83 +324,103 @@ class GradA2CAgent(A2CAgent):
 
         # indicator for steps that grad computation starts;
         grad_start = torch.zeros_like(self.experience_buffer.tensor_dict['dones'])
-
-        # start with clean grads first;
-        self.obs = self.vec_env.env.initialize_trajectory()
-        self.obs = self.obs_to_tensors(self.obs)
-        grad_start[0, :] = 1.0
-
+        
         grad_obses = []
         grad_values = []
+        grad_next_values = []
         grad_actions = []
         grad_rewards = []
+        grad_fdones = []
 
         for n in range(self.horizon_length):
 
+            if n % self.gi_num_step == 0:
+                # start with clean grads;
+                self.obs = self.vec_env.env.initialize_trajectory()
+                self.obs = self.obs_to_tensors(self.obs)
+                grad_start[n, :] = 1.0
+
+                grad_obses.clear()
+                grad_values.clear()
+                grad_next_values.clear()
+                grad_actions.clear()
+                grad_rewards.clear()
+                grad_fdones.clear()
+            else:
+                grad_start[n, :] = self.dones
+
+            # get action for current observation;
             if self.use_action_masks:
                 raise NotImplementedError()
             else:
                 res_dict = self.get_action_values(self.obs)
 
-            # we store tensor objects with gradients right into buffer,
-            # as they will be used later in GAE, which also needs gradient;
-            grad_obses.append(self.obs['obs'])
+            # we store tensor objects with gradients right into buffer;
+            grad_obses.append(res_dict['obs'])
             grad_values.append(res_dict['values'])
             grad_actions.append(res_dict['actions'])
+            grad_fdones.append(self.dones.float())
 
-            # only allow grad to flow in res_dict['values'];
-            with torch.no_grad():
-                for k in res_dict.keys():
-                    if isinstance(res_dict[k], torch.Tensor):
-                        res_dict[k] = res_dict[k].detach()
+            # [obs] is an observation of the current time step;
+            # store processed obs, which might have been normalized already;
+            self.experience_buffer.update_data('obses', n, res_dict['obs'])
 
-                self.obs['obs'] = self.obs['obs'].detach()
-
-            # info related to last time step;
-            self.experience_buffer.update_data('obses', n, self.obs['obs'])
+            # [dones] indicate if this step is the start of a new episode;
             self.experience_buffer.update_data('dones', n, self.dones)
 
             for k in update_list:
                 self.experience_buffer.update_data(k, n, res_dict[k]) 
             if self.has_central_value:
                 raise NotImplementedError()
-                
-            # if (n + 1) % self.gi_step_num == 0:
 
-            #     # initialize trajectory to cut off gradients;
-            #     # assume [self.vec_env] is [RLGPUEnv];
-
-            #     self.obs = self.vec_env.env.initialize_trajectory()
-            #     self.obs = self.obs_to_tensors(self.obs)
-
-            #     if n < len(grad_start) - 1:
-            #         grad_start[n + 1, :] = 1.0
-
-            # else:
-
-            #     # if trajectory has been done in last step and new episode starts, cut off grads;
-            #     grad_start[n, :] = self.dones    
-
+            # take action, retain grad of [actions] to find alpha-policy later;
             step_time_start = time.time()
-
-            grad_actions[-1].requires_grad = True
+            grad_actions[-1].retain_grad()
             actions = torch.tanh(grad_actions[-1])
-            # actions = self.experience_buffer.tensor_dict['actions'][n]
-            self.obs, rewards, self.dones, infos = self.env_step(actions)
-            
+            self.obs, rewards, self.dones, infos = self.vec_env.step(actions) # self.env_step(actions)
+            self.obs = self.obs_to_tensors(self.obs)
+            rewards = rewards.unsqueeze(-1)
+
             step_time_end = time.time()
 
             step_time += (step_time_end - step_time_start)
 
-            # [DefaultRewardsShaper] is differentiable;
-            assert isinstance(self.rewards_shaper, tr_helpers.DefaultRewardsShaper), "Not supported yet"
-            shaped_rewards = self.rewards_shaper(rewards)
-            grad_rewards.append(shaped_rewards)
+            # compute value of next state;
+            if True:
+                # assume that 'obs_before_reset' == 'obs' if the episode is not done yet;
+                # sanity check for above condition;
+                for i in range(len(self.obs['obs'])):
+                    o = self.obs['obs'][i]
+                    no = infos['obs_before_reset'][i]
+                    diff = torch.norm(o - no)
+                    if diff > 1e-5:
+                        assert self.dones[i], ""
+
+                next_obs = infos['obs_before_reset']
+                if self.normalize_input:
+                    self.running_mean_std.eval()
+                    next_obs = self.running_mean_std(next_obs)
+                next_value = self.target_critic(next_obs)
+                grad_next_values.append(next_value)
+
+            done_env_ids = self.dones.nonzero(as_tuple = False).squeeze(-1)
+            for id in done_env_ids:
+                if torch.isnan(infos['obs_before_reset'][id]).sum() > 0 \
+                    or torch.isinf(infos['obs_before_reset'][id]).sum() > 0 \
+                    or (torch.abs(infos['obs_before_reset'][id]) > 1e6).sum() > 0: # ugly fix for nan values
+                    grad_next_values[-1][id] = 0.
+                elif self.current_lengths[id] < self.episode_max_length: # early termination
+                    grad_next_values[-1][id] = 0.
+            
+            # add default reward;
+            grad_rewards.append(rewards)
+
+            # do not use reward shaper for now;
 
             if self.value_bootstrap and 'time_outs' in infos:
                 raise NotImplementedError()
                 
-            self.experience_buffer.update_data('rewards', n, shaped_rewards.detach())
+            self.experience_buffer.update_data('rewards', n, rewards)
 
             self.current_rewards += rewards.detach()
             self.current_lengths += 1
@@ -648,65 +436,154 @@ class GradA2CAgent(A2CAgent):
             self.current_rewards = self.current_rewards * not_dones.unsqueeze(1)
             self.current_lengths = self.current_lengths * not_dones
 
-        last_values = self.get_values(self.obs)
+            if (n + 1) % self.gi_num_step == 0 or \
+                (n + 1) == self.horizon_length:
 
-        fdones = self.dones.float()
-        mb_fdones = self.experience_buffer.tensor_dict['dones'].float()
+                '''
+                Update actor and critic networks using gradient descent.
+                (This scheme is borrowed from SHAC)
+                '''
+
+                # update actor;
+
+                if True:
+
+                    # compute loss for actor network and update;
+                    # this equals to GAE(1) of the first term;
+                    grad_advs = self.grad_advantages(1.0, 
+                                                        grad_values, 
+                                                        grad_next_values,
+                                                        grad_rewards)
+                    
+                    # add value of the states;
+                    for i in range(len(grad_values)):
+                        grad_advs[i] = grad_advs[i] + grad_values[i]
+
+                    beg_n = (n // self.gi_num_step) * self.gi_num_step
+                    end_n = n + 1
+
+                    curr_grad_start = grad_start[beg_n:end_n]
+                    actor_loss: torch.Tensor = -self.grad_advantages_first_terms_sum(grad_advs, curr_grad_start)
+                    actor_loss = actor_loss / ((end_n - beg_n) * self.num_actors)
+
+                    # update actor;
+                    self.actor_optimizer.zero_grad()
+                    actor_loss.backward()
+                    grad_norm_before_clip = tu.grad_norm(self.actor.parameters())
+                    if self.truncate_grads:
+                        torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.grad_norm)    
+                    self.grad_norm_after_clip = tu.grad_norm(self.actor.parameters()) 
+
+                    self.actor_optimizer.step()
+                    # print('actor , grad norm before clip = {:7.6f}'.format(grad_norm_before_clip.detach().cpu().item()))
+
+                # update critic;
+
+                if True:
+
+                    # compute advantage and add it to state value to get target values;
+                    with torch.no_grad():
+                        grad_advs = self.grad_advantages(self.tau,
+                                                            grad_values,
+                                                            grad_next_values, 
+                                                            grad_rewards)
+
+                        target_values = []
+                        for i in range(len(grad_advs)):
+                            target_values.append(grad_advs[i] + grad_values[i])
+
+                        # batchify;    
+                        th_obs = torch.cat(grad_obses, dim=0)
+                        th_target_values = torch.cat(target_values, dim=0)
+                        batch_size = len(th_target_values) // self.critic_num_batch
+                        critic_dataset = CriticDataset(batch_size, th_obs, th_target_values)
+
+                    self.critic.train()
+                    critic_loss = 0
+                    for j in range(self.critic_iterations):
+                        
+                        total_critic_loss = 0
+                        batch_cnt = 0
+                        
+                        for i in range(len(critic_dataset)):
+                        
+                            batch_sample = critic_dataset[i]
+                            self.critic_optimizer.zero_grad()
+
+                            predicted_values = self.critic(batch_sample['obs']).squeeze(-1)
+                            if self.normalize_value:
+                                raise NotImplementedError()
+                                predicted_values = self.value_mean_std(predicted_values, True)
+                            
+                            target_values = batch_sample['target_values']
+                            training_critic_loss = torch.mean((predicted_values - target_values) ** 2, dim=0)
+                            training_critic_loss.backward()
+                            
+                            # ugly fix for simulation nan problem
+                            for params in self.critic.parameters():
+                                params.grad.nan_to_num_(0.0, 0.0, 0.0)
+
+                            if self.truncate_grads:
+                                nn.utils.clip_grad_norm_(self.critic.parameters(), self.grad_norm)
+
+                            self.critic_optimizer.step()
+
+                            total_critic_loss += training_critic_loss
+                            batch_cnt += 1
+                        
+                        critic_loss = (total_critic_loss / batch_cnt).detach().cpu().item()
+                        print('value iter {}/{}, loss = {:7.6f}'.format(j + 1, self.critic_iterations, critic_loss), end='\r')
+
+                    # update target critic;
+                    with torch.no_grad():
+                        alpha = self.target_critic_alpha
+                        for param, param_targ in zip(self.critic.parameters(), self.target_critic.parameters()):
+                            param_targ.data.mul_(alpha)
+                            param_targ.data.add_((1. - alpha) * param.data)
+
         
-        grad_values = grad_values
-        grad_rewards = grad_rewards
-        grad_advs = self.grad_discount_values(fdones, last_values, mb_fdones, grad_values, grad_rewards)
-
-        if True:
-
-            with torch.no_grad():
-
-                mb_values = self.experience_buffer.tensor_dict['values']
-                mb_rewards = self.experience_buffer.tensor_dict['rewards']
-                mb_advs = self.discount_values(fdones, last_values, mb_fdones, mb_values, mb_rewards)
-
-                # _grad_advs = torch.tensor(grad_advs, device=mb_advs.device)
-                # assert torch.all(mb_advs - _grad_advs < 1e-6)
-        
-        mb_returns = mb_advs + mb_values
-
-        # compute advantage gradients;
-        mb_adv_grads = self.advantage_gradients_gae(grad_actions, grad_advs, grad_start)
-        self.experience_buffer.tensor_dict['adv_grads'] = mb_adv_grads
-
-        # clear computation graph;
 
         self.clear_experience_buffer_grads()
 
-        with torch.no_grad():
-
-            batch_dict = self.experience_buffer.get_transformed_list(swap_and_flatten01, self.tensor_list)
-            batch_dict['returns'] = swap_and_flatten01(mb_returns.detach())
-            batch_dict['played_frames'] = self.batch_size
-            batch_dict['step_time'] = step_time
-
+        batch_dict = {}
+        batch_dict['played_frames'] = self.batch_size
+        batch_dict['step_time'] = step_time
 
         return batch_dict
 
-    def grad_discount_values(self, fdones, last_extrinsic_values, mb_fdones, mb_extrinsic_values, mb_rewards):
-        lastgaelam = 0
+    def grad_advantages(self, gae_tau, mb_extrinsic_values, mb_next_extrinsic_values, mb_rewards):
+
+        num_step = len(mb_extrinsic_values)
         mb_advs = []
+        
+        # GAE;
 
-        for t in reversed(range(self.horizon_length)):
-            if t == self.horizon_length - 1:
-                nextnonterminal = 1.0 - fdones
-                nextvalues = last_extrinsic_values
-            else:
-                nextnonterminal = 1.0 - mb_fdones[t+1]
-                nextvalues = mb_extrinsic_values[t+1]
-            nextnonterminal = nextnonterminal.unsqueeze(1)
+        lastgaelam = 0
 
-            delta = mb_rewards[t] + self.gamma * nextvalues * nextnonterminal - mb_extrinsic_values[t]
-            mb_adv = lastgaelam = delta + self.gamma * self.tau * nextnonterminal * lastgaelam
+        for t in reversed(range(num_step)):
+            nextvalues = mb_next_extrinsic_values[t]
+
+            delta = mb_rewards[t] + self.gamma * nextvalues - mb_extrinsic_values[t]
+            mb_adv = lastgaelam = delta + self.gamma * gae_tau * lastgaelam
             mb_advs.append(mb_adv)
 
         mb_advs.reverse()
         return mb_advs
+
+    def grad_advantages_first_terms_sum(self, grad_advs, grad_start):
+
+        num_timestep = grad_start.shape[0]
+        num_actors = grad_start.shape[1]
+
+        adv_sum = 0
+
+        for i in range(num_timestep):
+            for j in range(num_actors):
+                if grad_start[i, j]:
+                    adv_sum = adv_sum + grad_advs[i][j]
+
+        return adv_sum
+
 
     def advantage_gradients_gae(self, mb_actions, mb_advs, grad_start):
 

@@ -17,6 +17,7 @@ from rl_games.algos_torch import players
 from rl_games.common.algo_observer import DefaultAlgoObserver
 from rl_games.algos_torch import sac_agent
 
+from rl_games.algos_torch import _grad_a2c_continuous_backup
 from rl_games.algos_torch import _grad_a2c_continuous
 
 class Runner:
@@ -28,8 +29,8 @@ class Runner:
         #self.algo_factory.register_builder('dqn', lambda **kwargs : dqnagent.DQNAgent(**kwargs))
 
         # grad rl;
-        self.algo_factory.register_builder('grad_a2c_continuous', lambda **kwargs : _grad_a2c_continuous.GradA2CAgent(**kwargs))
-        
+        # self.algo_factory.register_builder('grad_a2c_continuous', lambda **kwargs : _grad_a2c_continuous_backup.GradA2CAgent(**kwargs))
+        self.algo_factory.register_builder('grad_a2c_continuous', lambda **kwargs: _grad_a2c_continuous.GradA2CAgent(**kwargs))
 
         self.player_factory = object_factory.ObjectFactory()
         self.player_factory.register_builder('a2c_continuous', lambda **kwargs : players.PpoPlayerContinuous(**kwargs))
