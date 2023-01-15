@@ -177,17 +177,11 @@ class GradA2CAgent(A2CAgent):
             av_kls = torch_ext.mean_list(ep_kls)
 
             if self.schedule_type == 'standard':
-                if self.multi_gpu:
-                    av_kls = self.hvd.average_value(av_kls, 'ep_kls')
-                self.last_lr, self.entropy_coef = self.scheduler.update(self.last_lr, self.entropy_coef, self.epoch_num, 0,av_kls.item())
-                self.update_lr(self.last_lr)
+                raise NotImplementedError()
             kls.append(av_kls)
 
         if self.schedule_type == 'standard_epoch':
-            if self.multi_gpu:
-                av_kls = self.hvd.average_value(torch_ext.mean_list(kls), 'ep_kls')
-            self.last_lr, self.entropy_coef = self.scheduler.update(self.last_lr, self.entropy_coef, self.epoch_num, 0,av_kls.item())
-            self.update_lr(self.last_lr)
+            raise NotImplementedError()
 
         # update max alpha;
 
@@ -204,7 +198,7 @@ class GradA2CAgent(A2CAgent):
         # self.writer.add_scalar("info/est_var", np.mean(a_est_vars), self.epoch_num)
 
         if self.has_phasic_policy_gradients:
-            self.ppg_aux_loss.train_net(self)
+            raise NotImplementedError()
 
         update_time_end = time.time()
         play_time = play_time_end - play_time_start
@@ -234,7 +228,7 @@ class GradA2CAgent(A2CAgent):
         actions, mu, std = self.actor.forward_with_dist(processed_obs, deterministic=False)
         if std.ndim == 1:
             std = std.unsqueeze(0)                      
-            # std = std.expand(actions.shape[0], -1)      # make size of [std] same as [actions] and [mu];
+            std = std.expand(mu.shape[0], -1)      # make size of [std] same as [actions] and [mu];
         neglogp = self.neglogp(actions, mu, std, torch.log(std))
 
         # self.target_critic.eval()
@@ -735,13 +729,7 @@ class GradA2CAgent(A2CAgent):
         _, curr_mu, curr_std = self.actor.forward_with_dist(obs_batch, deterministic=False)
         if curr_std.ndim == 1:
             curr_std = curr_std.unsqueeze(0)                      
-            # curr_std = curr_std.expand(curr_mu.shape[0], -1)
-        self.actor.logstd.retain_grad()
-        curr_mu.retain_grad()
-        curr_std.retain_grad()
-        print("mu: {}, {} / st: {}, {}".format(
-            curr_mu[0, 0].cpu().item(), curr_mu[0, 1].cpu().item(),
-            curr_std[0, 0].cpu().item(), curr_std[0, 1].cpu().item()))
+            curr_std = curr_std.expand(curr_mu.shape[0], -1)
         neglogp = self.neglogp(actions_batch, curr_mu, curr_std, torch.log(curr_std))
 
         a_loss = _grad_common_losses.alpha_actor_loss(old_action_log_probs_batch, neglogp, advantage, self.ppo, curr_e_clip, initial_ratio)
@@ -752,9 +740,9 @@ class GradA2CAgent(A2CAgent):
         losses, sum_mask = torch_ext.apply_masks([a_loss.unsqueeze(1), b_loss.unsqueeze(1)], None)
         a_loss, b_loss = losses[0], losses[1]
 
-        print("action loss: {}".format(a_loss.cpu().item()))
-
         entropy = torch.zeros((1,), device=self.ppo_device)
+        assert self.entropy_coef == 0., ""
+
         loss = a_loss + 0.5 * c_loss * self.critic_coef - entropy * self.entropy_coef + b_loss * self.bounds_loss_coef
         
         self.ppo_optimizer.zero_grad()
@@ -785,3 +773,15 @@ class GradA2CAgent(A2CAgent):
         self.train_result = (a_loss, c_loss, entropy, \
             kl_dist, self.last_lr, lr_mul, \
             curr_mu.detach(), curr_std.detach(), b_loss)
+
+    def update_lr(self, lr):
+        if self.multi_gpu:
+            lr_tensor = torch.tensor([lr])
+            self.hvd.broadcast_value(lr_tensor, 'learning_rate')
+            lr = lr_tensor.item()
+
+        for param_group in self.ppo_optimizer.param_groups:
+            param_group['lr'] = lr
+        
+        #if self.has_central_value:
+        #    self.central_value_net.update_lr(lr)
