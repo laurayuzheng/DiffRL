@@ -112,3 +112,9 @@ class ActorStochasticMLP(nn.Module):
         dist = Normal(mu, std)
 
         return dist.log_prob(actions)
+
+    def forward_dist(self, obs):
+        mu = self.mu_net(obs)
+        std = self.logstd.exp() # (num_actions)
+
+        return mu, std

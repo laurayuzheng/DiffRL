@@ -228,7 +228,7 @@ class GradA2CAgent(A2CAgent):
         actions, mu, std = self.actor.forward_with_dist(processed_obs, deterministic=False)
         if std.ndim == 1:
             std = std.unsqueeze(0)                      
-            std = std.expand(mu.shape[0], -1)      # make size of [std] same as [actions] and [mu];
+            std = std.expand(mu.shape[0], -1).clone()      # make size of [std] same as [actions] and [mu];
         neglogp = self.neglogp(actions, mu, std, torch.log(std))
 
         # self.target_critic.eval()
@@ -322,7 +322,7 @@ class GradA2CAgent(A2CAgent):
             grad_values.append(res_dict['values'])
             grad_actions.append(res_dict['actions'])
             grad_fdones.append(self.dones.float())
-    
+
             # [obs] is an observation of the current time step;
             # store processed obs, which might have been normalized already;
             self.experience_buffer.update_data('obses', n, res_dict['obs'])
@@ -420,42 +420,12 @@ class GradA2CAgent(A2CAgent):
                 curr_grad_start = grad_start[n0:n1]
                 curr_grad_fdones = grad_fdones[n0:n1]
 
-                # update actor;
-
-                if False:
-
-                    # compute loss for actor network and update;
-                    # this equals to GAE(1) of the first term;
-                    curr_grad_advs = self.grad_advantages(1.0, 
-                                                        curr_grad_values, 
-                                                        curr_grad_next_values,
-                                                        curr_grad_rewards,
-                                                        curr_grad_fdones,
-                                                        last_fdones)
-                    
-                    # add value of the states;
-                    for i in range(len(curr_grad_values)):
-                        curr_grad_advs[i] = curr_grad_advs[i] + curr_grad_values[i]
-
-                    actor_loss: torch.Tensor = -self.grad_advantages_first_terms_sum(curr_grad_advs, curr_grad_start)
-                    actor_loss = actor_loss / ((n1 - n0) * self.num_actors)
-
-                    # update actor;
-                    self.actor_optimizer.zero_grad()
-                    actor_loss.backward(retain_graph=True)      # retain graph for later backward;
-                    grad_norm_before_clip = tu.grad_norm(self.actor.parameters())
-                    if self.truncate_grads:
-                        torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.grad_norm)    
-                    grad_norm_after_clip = tu.grad_norm(self.actor.parameters()) 
-
-                    self.actor_optimizer.step()
-                    # print('actor , grad norm before clip = {:7.6f}'.format(grad_norm_before_clip.detach().cpu().item()))
-
                 # update critic;
 
                 if True:
 
                     # compute advantage and add it to state value to get target values;
+                    # also compute gradient of advantage w.r.t. action here to get alpha-policy later;
                     with torch.no_grad():
                         curr_grad_advs = self.grad_advantages(self.tau,
                                                                 curr_grad_values,
@@ -516,6 +486,37 @@ class GradA2CAgent(A2CAgent):
                         for param, param_targ in zip(self.critic.parameters(), self.target_critic.parameters()):
                             param_targ.data.mul_(alpha)
                             param_targ.data.add_((1. - alpha) * param.data)
+
+                # update actor;
+
+                if True:
+
+                    # compute loss for actor network and update;
+                    # this equals to GAE(1) of the first term;
+                    curr_grad_advs = self.grad_advantages(1.0, 
+                                                        curr_grad_values, 
+                                                        curr_grad_next_values,
+                                                        curr_grad_rewards,
+                                                        curr_grad_fdones,
+                                                        last_fdones)
+                    
+                    # add value of the states;
+                    for i in range(len(curr_grad_values)):
+                        curr_grad_advs[i] = curr_grad_advs[i] + curr_grad_values[i]
+
+                    actor_loss: torch.Tensor = -self.grad_advantages_first_terms_sum(curr_grad_advs, curr_grad_start)
+                    actor_loss = actor_loss / ((n1 - n0) * self.num_actors)
+
+                    # update actor;
+                    self.actor_optimizer.zero_grad()
+                    actor_loss.backward(retain_graph=True)      # retain graph for later backward;
+                    grad_norm_before_clip = tu.grad_norm(self.actor.parameters())
+                    if self.truncate_grads:
+                        torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.grad_norm)    
+                    grad_norm_after_clip = tu.grad_norm(self.actor.parameters()) 
+
+                    self.actor_optimizer.step()
+                    # print('actor , grad norm before clip = {:7.6f}'.format(grad_norm_before_clip.detach().cpu().item()))
 
         # compute advantages that would be used for RL update;
         last_fdones = self.dones.float()
@@ -673,6 +674,18 @@ class GradA2CAgent(A2CAgent):
                 raise NotImplementedError()
                 advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
+        # compute [mus] and [sigmas] again here because we could have
+        # updated policy in [play_steps], these terms will be used to
+        # compute KL div of updated policies, which could be used to
+        # control learning rate later;
+        with torch.no_grad():
+            n_mus, n_sigmas = self.actor.forward_dist(obses)
+            if n_sigmas.ndim == 1:
+                n_sigmas = n_sigmas.unsqueeze(0)                      
+                n_sigmas = n_sigmas.expand(mus.shape[0], -1).clone()
+            
+            n_neglogpacs = self.neglogp(actions, n_mus, n_sigmas, torch.log(n_sigmas))
+
         dataset_dict = {}
         dataset_dict['old_values'] = values
         dataset_dict['old_logp_actions'] = neglogpacs
@@ -681,11 +694,11 @@ class GradA2CAgent(A2CAgent):
         dataset_dict['obs'] = obses
         dataset_dict['rnn_states'] = rnn_states
         dataset_dict['rnn_masks'] = rnn_masks
-        dataset_dict['mu'] = mus
-        dataset_dict['sigma'] = sigmas
+        dataset_dict['mu'] = n_mus
+        dataset_dict['sigma'] = n_sigmas
 
         dataset_dict['adv_grads'] = adv_grads
-        dataset_dict['initial_ratio'] = torch.ones_like(neglogpacs)
+        dataset_dict['initial_ratio'] = torch.exp(neglogpacs - n_neglogpacs) # torch.ones_like(neglogpacs)
 
         self.dataset.update_values_dict(dataset_dict)
 
@@ -714,11 +727,14 @@ class GradA2CAgent(A2CAgent):
         value_preds_batch = input_dict['old_values']
         old_action_log_probs_batch = input_dict['old_logp_actions']
         advantage = input_dict['advantages']
-        old_mu_batch = input_dict['mu']
-        old_sigma_batch = input_dict['sigma']
         actions_batch = input_dict['actions']
         initial_ratio = input_dict['initial_ratio']
         obs_batch = input_dict['obs']
+
+        # these old mu and sigma are used to compute new policy's KL div from
+        # the old policy, which could be used to update learning rate later;
+        old_mu_batch = input_dict['mu']
+        old_sigma_batch = input_dict['sigma']
         
         lr_mul = 1.0
         curr_e_clip = lr_mul * self.e_clip
@@ -726,10 +742,11 @@ class GradA2CAgent(A2CAgent):
         if self.is_rnn:
             raise NotImplementedError()
             
-        _, curr_mu, curr_std = self.actor.forward_with_dist(obs_batch, deterministic=False)
+        # get current policy's actions;
+        curr_mu, curr_std = self.actor.forward_dist(obs_batch)
         if curr_std.ndim == 1:
             curr_std = curr_std.unsqueeze(0)                      
-            curr_std = curr_std.expand(curr_mu.shape[0], -1)
+            curr_std = curr_std.expand(curr_mu.shape[0], -1).clone()
         neglogp = self.neglogp(actions_batch, curr_mu, curr_std, torch.log(curr_std))
 
         a_loss = _grad_common_losses.alpha_actor_loss(old_action_log_probs_batch, neglogp, advantage, self.ppo, curr_e_clip, initial_ratio)
