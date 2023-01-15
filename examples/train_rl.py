@@ -159,6 +159,8 @@ def get_args(): # TODO: delve into the arguments
 
 if __name__ == '__main__':
 
+    # torch.autograd.set_detect_anomaly(True)
+
     args = get_args()
 
     with open(args.cfg, 'r') as f:
@@ -174,8 +176,9 @@ if __name__ == '__main__':
         cfg_train["params"]["config"]["num_actors"] = args.num_envs
 
     # alpha
-    cfg_train["params"]["config"]["gi_params"]["max_alpha"] = args.gi_max_alpha
-    cfg_train["params"]["config"]["gi_params"]["seed"] = args.seed
+    if "gi_params" in cfg_train["params"]["config"].keys():
+        cfg_train["params"]["config"]["gi_params"]["max_alpha"] = args.gi_max_alpha
+        cfg_train["params"]["config"]["gi_params"]["seed"] = args.seed
         
     vargs = vars(args)
     

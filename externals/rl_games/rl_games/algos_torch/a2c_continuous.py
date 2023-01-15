@@ -112,6 +112,7 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
             
         with torch.cuda.amp.autocast(enabled=self.mixed_precision):
             res_dict = self.model(batch_dict)
+            self.model.a2c_network.sigma.retain_grad()
             action_log_probs = res_dict['prev_neglogp']
             values = res_dict['values']
             entropy = res_dict['entropy']

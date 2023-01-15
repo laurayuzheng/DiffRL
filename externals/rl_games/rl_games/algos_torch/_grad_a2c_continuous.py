@@ -139,49 +139,26 @@ class GradA2CAgent(A2CAgent):
         rnn_masks = batch_dict.get('rnn_masks', None)
 
         self.curr_frames = batch_dict.pop('played_frames')
-        # self.prepare_dataset(batch_dict)
-        # self.algo_observer.after_steps()
+        self.prepare_dataset(batch_dict)
+        self.algo_observer.after_steps()
 
         if self.has_central_value:
             raise NotImplementedError()
 
-        a_losses = [torch.ones([1,], device=self.ppo_device)]
-        c_losses = [torch.ones([1,], device=self.ppo_device)]
-        b_losses = [torch.ones([1,], device=self.ppo_device)]
-        entropies = [torch.ones([1,], device=self.ppo_device)]
-        kls = [torch.ones([1,], device=self.ppo_device)]
-
-        return batch_dict['step_time'], play_time_end - play_time_start, 1, 1, a_losses, c_losses, b_losses, entropies, kls, 1, 1
-
-        # estimator variances;
-        a_est_vars = []
+        a_losses = []
+        c_losses = []
+        b_losses = []
+        entropies = []
+        kls = []
 
         if self.is_rnn:
             raise NotImplementedError()
 
-        # init beta;
-
-        # self.beta_sampling()
-
-        old_mu = self.dataset.values_dict['mu'].clone()
-        old_sigma = self.dataset.values_dict['sigma'].clone()
-
-        # init alpha;
-        self.init_alpha(old_mu, old_sigma)
-
-        # alphas;
-        alphas = []
-
         for _ in range(0, self.mini_epochs_num):
-
-            # update alpha;
-
-            self.update_alpha(old_mu, old_sigma)
-            alphas.append(self.gi_alpha)
 
             ep_kls = []
             for i in range(len(self.dataset)):
-                a_loss, c_loss, entropy, kl, last_lr, lr_mul, cmu, csigma, b_loss, a_est_var = self.train_actor_critic(self.dataset[i])
+                a_loss, c_loss, entropy, kl, last_lr, lr_mul, cmu, csigma, b_loss = self.train_actor_critic(self.dataset[i])
                 a_losses.append(a_loss)
                 c_losses.append(c_loss)
                 ep_kls.append(kl)
@@ -189,11 +166,9 @@ class GradA2CAgent(A2CAgent):
                 if self.bounds_loss_coef is not None:
                     b_losses.append(b_loss)
 
-                a_est_vars.append(a_est_var)
-
                 self.dataset.update_mu_sigma(cmu, csigma)   
 
-                if self.schedule_type == 'legacy':  
+                if self.schedule_type == 'legacy':
                     if self.multi_gpu:
                         kl = self.hvd.average_value(kl, 'ep_kls')
                     self.last_lr, self.entropy_coef = self.scheduler.update(self.last_lr, self.entropy_coef, self.epoch_num, 0,kl.item())
@@ -216,9 +191,9 @@ class GradA2CAgent(A2CAgent):
 
         # update max alpha;
 
-        self.update_max_alpha()
-        self.writer.add_scalar("info/alpha", np.mean(alphas), self.epoch_num)
-        self.writer.add_scalar("info/alpha_strategy", self.gi_alpha_strategy, self.epoch_num)
+        # self.update_max_alpha()
+        # self.writer.add_scalar("info/alpha", np.mean(alphas), self.epoch_num)
+        # self.writer.add_scalar("info/alpha_strategy", self.gi_alpha_strategy, self.epoch_num)
 
         # update beta;
 
@@ -226,7 +201,7 @@ class GradA2CAgent(A2CAgent):
 
         # log estimator variance;
 
-        self.writer.add_scalar("info/est_var", np.mean(a_est_vars), self.epoch_num)
+        # self.writer.add_scalar("info/est_var", np.mean(a_est_vars), self.epoch_num)
 
         if self.has_phasic_policy_gradients:
             self.ppg_aux_loss.train_net(self)
@@ -241,7 +216,7 @@ class GradA2CAgent(A2CAgent):
     def neglogp(self, x, mean, std, logstd):
 
         assert x.ndim == 2 and mean.ndim == 2 and std.ndim == 2 and logstd.ndim == 2, ""
-        assert x.shape[0] == mean.shape[0] and x.shape[0] == std.shape[0] and x.shape[0] == logstd.shape[0], ""
+        # assert x.shape[0] == mean.shape[0] and x.shape[0] == std.shape[0] and x.shape[0] == logstd.shape[0], ""
 
         return 0.5 * (((x - mean) / std)**2).sum(dim=-1) \
             + 0.5 * np.log(2.0 * np.pi) * x.size()[-1] \
@@ -259,7 +234,7 @@ class GradA2CAgent(A2CAgent):
         actions, mu, std = self.actor.forward_with_dist(processed_obs, deterministic=False)
         if std.ndim == 1:
             std = std.unsqueeze(0)                      
-            std = std.expand(actions.shape[0], -1)      # make size of [std] same as [actions] and [mu];
+            # std = std.expand(actions.shape[0], -1)      # make size of [std] same as [actions] and [mu];
         neglogp = self.neglogp(actions, mu, std, torch.log(std))
 
         # self.target_critic.eval()
@@ -453,7 +428,7 @@ class GradA2CAgent(A2CAgent):
 
                 # update actor;
 
-                if True:
+                if False:
 
                     # compute loss for actor network and update;
                     # this equals to GAE(1) of the first term;
@@ -473,7 +448,7 @@ class GradA2CAgent(A2CAgent):
 
                     # update actor;
                     self.actor_optimizer.zero_grad()
-                    actor_loss.backward()
+                    actor_loss.backward(retain_graph=True)      # retain graph for later backward;
                     grad_norm_before_clip = tu.grad_norm(self.actor.parameters())
                     if self.truncate_grads:
                         torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.grad_norm)    
@@ -572,7 +547,8 @@ class GradA2CAgent(A2CAgent):
 
             for i in range(len(grad_advs)):
                 grad_advs[i] = grad_advs[i].unsqueeze(0)
-            batch_dict['advantages'] = torch.cat(grad_advs, dim=0)
+            batch_dict['advantages'] = swap_and_flatten01(torch.cat(grad_advs, dim=0).detach())
+
             batch_dict['played_frames'] = self.batch_size
             batch_dict['step_time'] = step_time
 
@@ -629,15 +605,15 @@ class GradA2CAgent(A2CAgent):
 
         for action in mb_actions:
             action.grad = None
-        adv_sum.backward()
+        #adv_sum.backward()
 
         adv_grads = torch.zeros_like(self.experience_buffer.tensor_dict['actions'])
 
         num_timestep = grad_start.shape[0]
         num_actors = grad_start.shape[1]
         
-        for i in range(num_timestep):
-            adv_grads[i] = mb_actions[i].grad
+        # for i in range(num_timestep):
+        #     adv_grads[i] = mb_actions[i].grad
 
         # adv_grads = self.experience_buffer.tensor_dict['actions'].grad
 
@@ -746,93 +722,66 @@ class GradA2CAgent(A2CAgent):
         advantage = input_dict['advantages']
         old_mu_batch = input_dict['mu']
         old_sigma_batch = input_dict['sigma']
-        return_batch = input_dict['returns']
         actions_batch = input_dict['actions']
         initial_ratio = input_dict['initial_ratio']
         obs_batch = input_dict['obs']
-        obs_batch = self._preproc_obs(obs_batch)
-
-        lr = self.last_lr
-        kl = 1.0
+        
         lr_mul = 1.0
         curr_e_clip = lr_mul * self.e_clip
 
-        batch_dict = {
-            'is_train': True,
-            'prev_actions': actions_batch, 
-            'obs' : obs_batch,
-        }
-
-        rnn_masks = None
         if self.is_rnn:
-            rnn_masks = input_dict['rnn_masks']
-            batch_dict['rnn_states'] = input_dict['rnn_states']
-            batch_dict['seq_length'] = self.seq_len
+            raise NotImplementedError()
             
-        with torch.cuda.amp.autocast(enabled=self.mixed_precision):
-            res_dict = self.model(batch_dict)
-            action_log_probs = res_dict['prev_neglogp']
-            values = res_dict['values']
-            entropy = res_dict['entropy']
-            mu = res_dict['mus']
-            sigma = res_dict['sigmas']
+        _, curr_mu, curr_std = self.actor.forward_with_dist(obs_batch, deterministic=False)
+        if curr_std.ndim == 1:
+            curr_std = curr_std.unsqueeze(0)                      
+            # curr_std = curr_std.expand(curr_mu.shape[0], -1)
+        self.actor.logstd.retain_grad()
+        curr_mu.retain_grad()
+        curr_std.retain_grad()
+        print("mu: {}, {} / st: {}, {}".format(
+            curr_mu[0, 0].cpu().item(), curr_mu[0, 1].cpu().item(),
+            curr_std[0, 0].cpu().item(), curr_std[0, 1].cpu().item()))
+        neglogp = self.neglogp(actions_batch, curr_mu, curr_std, torch.log(curr_std))
 
-            a_loss = _grad_common_losses.alpha_actor_loss(old_action_log_probs_batch, action_log_probs, advantage, self.ppo, curr_e_clip, initial_ratio)
+        a_loss = _grad_common_losses.alpha_actor_loss(old_action_log_probs_batch, neglogp, advantage, self.ppo, curr_e_clip, initial_ratio)
+        c_loss = torch.zeros((1,), device=self.ppo_device)
+        b_loss = self.bound_loss(curr_mu)
 
-            # compute variance of our estimator;
+        # do not have entropy coef for now;
+        losses, sum_mask = torch_ext.apply_masks([a_loss.unsqueeze(1), b_loss.unsqueeze(1)], None)
+        a_loss, b_loss = losses[0], losses[1]
 
-            if True:
+        print("action loss: {}".format(a_loss.cpu().item()))
 
-                ratio = torch.exp(old_action_log_probs_batch - action_log_probs)
-                mean_terms = advantage * ratio
+        entropy = torch.zeros((1,), device=self.ppo_device)
+        loss = a_loss + 0.5 * c_loss * self.critic_coef - entropy * self.entropy_coef + b_loss * self.bounds_loss_coef
+        
+        self.ppo_optimizer.zero_grad()
+        if self.multi_gpu:
+            raise NotImplementedError()
+        else:
+            for param in self.actor.parameters():
+                param.grad = None
 
-                _a_est_mean = torch.mean(mean_terms, dim=0).item()
-                
-                var_terms = torch.pow(mean_terms - _a_est_mean, 2.0)
-                _a_est_var = torch.mean(var_terms, dim=0).item()
-
-            if self.has_value_loss:
-                c_loss = common_losses.critic_loss(value_preds_batch, values, curr_e_clip, return_batch, self.clip_value)
-            else:
-                c_loss = torch.zeros(1, device=self.ppo_device)
-
-            b_loss = self.bound_loss(mu)
-            losses, sum_mask = torch_ext.apply_masks([a_loss.unsqueeze(1), c_loss, entropy.unsqueeze(1), b_loss.unsqueeze(1)], rnn_masks)
-            a_loss, c_loss, entropy, b_loss = losses[0], losses[1], losses[2], losses[3]
-
-            loss = a_loss + 0.5 * c_loss * self.critic_coef - entropy * self.entropy_coef + b_loss * self.bounds_loss_coef
-            
-            if self.multi_gpu:
-                self.optimizer.zero_grad()
-            else:
-                for param in self.model.parameters():
-                    param.grad = None
-
-        self.scaler.scale(loss).backward()
+        loss.backward()
+        
         #TODO: Refactor this ugliest code of they year
         if self.truncate_grads:
             if self.multi_gpu:
-                self.optimizer.synchronize()
-                self.scaler.unscale_(self.optimizer)
-                nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_norm)
-                with self.optimizer.skip_synchronize():
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
+                raise NotImplementedError()
             else:
-                self.scaler.unscale_(self.optimizer)
-                nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_norm)
-                self.scaler.step(self.optimizer)
-                self.scaler.update()    
+                nn.utils.clip_grad_norm_(self.actor.parameters(), self.grad_norm)
+                self.ppo_optimizer.step()
         else:
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
+            self.ppo_optimizer.step()
 
         with torch.no_grad():
             reduce_kl = not self.is_rnn
-            kl_dist = torch_ext.policy_kl(mu.detach(), sigma.detach(), old_mu_batch, old_sigma_batch, reduce_kl)
+            kl_dist = torch_ext.policy_kl(curr_mu.detach(), curr_std.detach(), old_mu_batch, old_sigma_batch, reduce_kl)
             if self.is_rnn:
-                kl_dist = (kl_dist * rnn_masks).sum() / rnn_masks.numel()  #/ sum_mask
-                    
+                raise NotImplementedError()
+                
         self.train_result = (a_loss, c_loss, entropy, \
             kl_dist, self.last_lr, lr_mul, \
-            mu.detach(), sigma.detach(), b_loss, _a_est_var)
+            curr_mu.detach(), curr_std.detach(), b_loss)
