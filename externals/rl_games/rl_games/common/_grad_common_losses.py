@@ -65,6 +65,30 @@ def alpha_policy_loss(actions, advantages, adv_grads, model, old_mu, old_sigma, 
 
     return a_est_mean, a_est_var
 
+
+def alpha_policy_correspondence_loss(actions, advantages, adv_grads, model, old_mu, old_sigma, curr_mu, curr_sigma, alpha):
+    
+    adv_grads_norm = torch.pow(torch.norm(adv_grads, p=2, dim=1), 2.0)
+    
+    p_actions = actions + (adv_grads * alpha)
+    p_advantages = advantages + (adv_grads_norm * alpha)
+
+    # compute probabilities of [p_actions];
+
+    old_logstd = torch.log(old_sigma)
+    curr_logstd = torch.log(curr_sigma)
+
+    old_neglogp = model.neglogp(actions, old_mu, old_sigma, old_logstd)     
+    curr_neglogp = model.neglogp(p_actions, curr_mu, curr_sigma, curr_logstd)
+
+    old_neglogp = torch.squeeze(old_neglogp)
+    curr_neglogp = torch.squeeze(curr_neglogp)
+
+    ratio = old_neglogp - curr_neglogp      # these two have to be equal;
+    loss = torch.norm(ratio, p=2)
+
+    return loss
+
 def alpha_actor_loss(old_action_log_probs_batch, action_log_probs, advantage, is_ppo, curr_e_clip, initial_ratio):
 
     if is_ppo:

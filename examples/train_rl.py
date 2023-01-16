@@ -28,6 +28,7 @@ import torch
 
 from utils.common import *
 
+device = 'cpu'
 
 def create_dflex_env(**kwargs):
     env_fn = getattr(envs, cfg_train["params"]["diff_env"]["name"])
@@ -42,7 +43,8 @@ def create_dflex_env(**kwargs):
         render=args.render, seed=args.seed, \
         episode_length=cfg_train["params"]["diff_env"].get("episode_length", 1000), \
         no_grad=no_grad, stochastic_init=cfg_train['params']['diff_env']['stochastic_env'], \
-        MM_caching_frequency=cfg_train['params']['diff_env'].get('MM_caching_frequency', 1))
+        MM_caching_frequency=cfg_train['params']['diff_env'].get('MM_caching_frequency', 1),
+        device=device)
 
     print('num_envs = ', env.num_envs)
     print('num_actions = ', env.num_actions)
@@ -61,7 +63,7 @@ class RLGPUEnv(vecenv.IVecEnv):
 
         self.full_state = {}
 
-        self.rl_device = "cuda:0"
+        self.rl_device = device #"cuda:0"
 
         self.full_state["obs"] = self.env.reset(force_reset=True).to(self.rl_device)
         print(self.full_state["obs"].shape)
