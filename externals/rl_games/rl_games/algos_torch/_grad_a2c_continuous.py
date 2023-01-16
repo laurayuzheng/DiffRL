@@ -152,9 +152,9 @@ class GradA2CAgent(A2CAgent):
         kls = []
 
         # initialize alpha-policy;
-        old_mu = self.dataset.values_dict['old_mu']
-        old_sigma = self.dataset.values_dict['old_sigma']
-        self.init_alpha(old_mu, old_sigma)
+        # old_mu = self.dataset.values_dict['old_mu']
+        # old_sigma = self.dataset.values_dict['old_sigma']
+        # self.init_alpha(old_mu, old_sigma)
 
         if self.is_rnn:
             raise NotImplementedError()
@@ -479,13 +479,6 @@ class GradA2CAgent(A2CAgent):
                         critic_loss = (total_critic_loss / batch_cnt).detach().cpu().item()
                         print('value iter {}/{}, loss = {:7.6f}'.format(j + 1, self.critic_iterations, critic_loss), end='\r')
 
-                    # update target critic;
-                    with torch.no_grad():
-                        alpha = self.target_critic_alpha
-                        for param, param_targ in zip(self.critic.parameters(), self.target_critic.parameters()):
-                            param_targ.data.mul_(alpha)
-                            param_targ.data.add_((1. - alpha) * param.data)
-
                 # update actor;
 
                 if True:
@@ -516,6 +509,15 @@ class GradA2CAgent(A2CAgent):
 
                     self.actor_optimizer.step()
                     # print('actor , grad norm before clip = {:7.6f}'.format(grad_norm_before_clip.detach().cpu().item()))
+
+                # update target critic;
+                # this has to be done after actor update, because [target_critic] is involved in
+                # computing actor loss;
+                with torch.no_grad():
+                    alpha = self.target_critic_alpha
+                    for param, param_targ in zip(self.critic.parameters(), self.target_critic.parameters()):
+                        param_targ.data.mul_(alpha)
+                        param_targ.data.add_((1. - alpha) * param.data)
 
         # compute advantages that would be used for RL update;
         with torch.no_grad():
@@ -597,15 +599,16 @@ class GradA2CAgent(A2CAgent):
 
         for action in mb_actions:
             action.grad = None
-        adv_sum.backward(retain_graph=True)
+        # adv_sum.backward(retain_graph=True)
 
         adv_grads = []
         
         num_timestep = grad_start.shape[0]
         num_actors = grad_start.shape[1]
-        
-        for i in range(num_timestep):
-            adv_grads.append(mb_actions[i].grad)
+
+        for action in mb_actions:
+            adv_grads.append(torch.zeros_like(action)) #action.grad.clone())
+            #action.grad = None
 
         # reweight grads;
 
@@ -666,7 +669,6 @@ class GradA2CAgent(A2CAgent):
             if self.is_rnn:
                 raise NotImplementedError()
             else:
-                raise NotImplementedError()
                 advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
         # compute [mus] and [sigmas] again here because we could have
