@@ -1,5 +1,3 @@
-from typing import List
-from rl_games.common import tr_helpers
 import time
 
 import torch 
@@ -7,14 +5,13 @@ from torch import nn
 import numpy as np
 import gym
 
-from rl_games.algos_torch import torch_ext
+from rl_games.algos_torch import running_mean_std, torch_ext
 
 from rl_games.common.a2c_common import swap_and_flatten01, A2CBase
 from rl_games.algos_torch.a2c_continuous import A2CAgent
 from rl_games.common._grad_experience import GradExperienceBuffer
 from rl_games.algos_torch._grad_running_mean_std import GradRunningMeanStd
-from rl_games.common import schedulers
-from rl_games.common import common_losses, _grad_common_losses
+from rl_games.common import _grad_common_losses
 
 from utils.dataset import CriticDataset
 import models.actor
@@ -22,6 +19,7 @@ import models.critic
 import copy
 import utils.torch_utils as tu
 import utils.common
+from utils.running_mean_std import RunningMeanStd
 
 class GradA2CAgent(A2CAgent):
     def __init__(self, base_name, config):
@@ -75,29 +73,22 @@ class GradA2CAgent(A2CAgent):
         # this step size is also used for policy update based on analytical policy gradients;
         self.gi_num_step = config['gi_params']['num_step']
 
+        self.gi_lr_schedule = config['gi_params']['lr_schedule']
+
         # initialize ppo optimizer;
 
         self.ppo_last_lr = self.last_lr
         self.ppo_optimizer = torch.optim.Adam(self.actor.parameters(), lr=self.ppo_last_lr, eps=1e-8, weight_decay=self.weight_decay)
 
         # change to proper running mean std for backpropagation;
-
         if self.normalize_input:
             if isinstance(self.observation_space, gym.spaces.Dict):
                 raise NotImplementedError()
             else:
-                self.running_mean_std = GradRunningMeanStd(self.obs_shape).to(self.ppo_device)
-
+                self.obs_rms = RunningMeanStd(shape=self.obs_shape, device=self.ppo_device)
+                
         if self.normalize_value:
             raise NotImplementedError()
-            self.value_mean_std = GradRunningMeanStd((1,)).to(self.ppo_device)
-
-        # we have additional hyperparameter [gi_alpha] that determines alpha-policy;
-
-        self.init_max_alpha(config)
-
-        self.gi_alpha = torch.tensor([0.], dtype=torch.float32, device=self.ppo_device, requires_grad=True)
-        self.gi_alpha_optim = torch.optim.Adam([self.gi_alpha])
 
         # episode length;
         self.episode_max_length = self.vec_env.env.episode_length
@@ -120,18 +111,29 @@ class GradA2CAgent(A2CAgent):
 
         # add advantage grad;
         self.tensor_list = self.tensor_list + ['adv_grads']
-
-    def init_max_alpha(self, config):
-
-        self.gi_alpha_num_search = 32
-        self.gi_max_alpha: float = config['gi_params'].get('max_alpha', 0.1)
         
     def train_epoch(self):
 
         A2CBase.train_epoch(self)
 
         play_time_start = time.time()
-        
+
+        # set learning rate;
+        if self.gi_lr_schedule == 'linear':
+            actor_lr = (1e-5 - self.actor_lr) * float(self.epoch_num / self.max_epochs) + self.actor_lr
+            for param_group in self.actor_optimizer.param_groups:
+                param_group['lr'] = actor_lr
+            critic_lr = (1e-5 - self.critic_lr) * float(self.epoch_num / self.max_epochs) + self.critic_lr
+            for param_group in self.critic_optimizer.param_groups:
+                param_group['lr'] = critic_lr
+        else:
+            actor_lr = self.actor_lr
+            critic_lr = self.critic_lr
+
+        self.writer.add_scalar("info/gi_actor_lr", actor_lr, self.epoch_num)
+        self.writer.add_scalar("info/gi_critic_lr", critic_lr, self.epoch_num)
+
+        # collect experience;
         if self.is_rnn:
             raise NotImplementedError()
         else:
@@ -153,11 +155,7 @@ class GradA2CAgent(A2CAgent):
         b_losses = []
         entropies = []
         kls = []
-
-        # initialize alpha-policy;
-        old_mu = self.dataset.values_dict['old_mu']
-        old_sigma = self.dataset.values_dict['old_sigma']
-        self.init_alpha(old_mu, old_sigma)
+        worse_ratios = []
 
         if self.is_rnn:
             raise NotImplementedError()
@@ -166,13 +164,14 @@ class GradA2CAgent(A2CAgent):
 
             ep_kls = []
             for i in range(len(self.dataset)):
-                a_loss, c_loss, entropy, kl, last_lr, lr_mul, cmu, csigma, b_loss = self.train_actor_critic(self.dataset[i])
+                a_loss, c_loss, entropy, kl, last_lr, lr_mul, cmu, csigma, b_loss, a_worse_ratio = self.train_actor_critic(self.dataset[i])
                 a_losses.append(a_loss)
                 c_losses.append(c_loss)
                 ep_kls.append(kl)
                 entropies.append(entropy)
                 if self.bounds_loss_coef is not None:
                     b_losses.append(b_loss)
+                worse_ratios.append(a_worse_ratio)
 
                 self.dataset.update_mu_sigma(cmu, csigma)   
 
@@ -194,6 +193,8 @@ class GradA2CAgent(A2CAgent):
         if self.has_phasic_policy_gradients:
             raise NotImplementedError()
 
+        self.writer.add_scalar("info/worse_ratio", np.mean(worse_ratios), self.epoch_num)
+
         update_time_end = time.time()
         play_time = play_time_end - play_time_start
         update_time = update_time_end - update_time_start
@@ -210,13 +211,15 @@ class GradA2CAgent(A2CAgent):
             + 0.5 * np.log(2.0 * np.pi) * x.size()[-1] \
             + logstd.sum(dim=-1)
 
-    def get_action_values(self, obs):
+    def get_action_values(self, obs, obs_rms):
         
         # normalize input if needed, we update rms only here;
         processed_obs = obs['obs']
         if self.normalize_input:
-            self.running_mean_std.train()
-            processed_obs = self.running_mean_std(obs['obs'])
+            # update rms;
+            with torch.no_grad():
+                self.obs_rms.update(processed_obs)
+            processed_obs = obs_rms.normalize(processed_obs)
         
         # [std] is a vector of length [action_dim], which is shared by all the envs;
         actions, mu, std = self.actor.forward_with_dist(processed_obs, deterministic=False)
@@ -269,11 +272,6 @@ class GradA2CAgent(A2CAgent):
 
         return values
 
-    def preprocess_actions(self, actions):
-        if not self.is_tensor_obses:
-            actions = actions.cpu().numpy()
-        return actions
-
     def play_steps(self):
 
         '''
@@ -296,21 +294,27 @@ class GradA2CAgent(A2CAgent):
         grad_fdones = []
         grad_adv_grads = []
 
-        for n in range(self.horizon_length):
+        # use frozen [obs_rms] during this one function call;
+        curr_obs_rms = None
+        if self.normalize_input:
+            with torch.no_grad():
+                curr_obs_rms = copy.deepcopy(self.obs_rms)
 
-            if n % self.gi_num_step == 0:
-                # start with clean grads;
-                self.obs = self.vec_env.env.initialize_trajectory()
-                self.obs = self.obs_to_tensors(self.obs)
-                grad_start[n, :] = 1.0
-            else:
+        # start with clean grads;
+        self.obs = self.vec_env.env.initialize_trajectory()
+        self.obs = self.obs_to_tensors(self.obs)
+        grad_start[0, :] = 1.0
+
+        for n in range(self.gi_num_step):
+
+            if n > 0:
                 grad_start[n, :] = self.dones
 
             # get action for current observation;
             if self.use_action_masks:
                 raise NotImplementedError()
             else:
-                res_dict = self.get_action_values(self.obs)
+                res_dict = self.get_action_values(self.obs, curr_obs_rms)
 
             # we store tensor objects with gradients;
             grad_obses.append(res_dict['obs'])
@@ -330,33 +334,32 @@ class GradA2CAgent(A2CAgent):
             if self.has_central_value:
                 raise NotImplementedError()
 
-            # take action, retain grad of [actions] to find alpha-policy later;
+            # take action;
             step_time_start = time.time()
-            grad_actions[-1].retain_grad()
             actions = torch.tanh(grad_actions[-1])
-            self.obs, rewards, self.dones, infos = self.vec_env.step(actions) # self.env_step(actions)
+            
+            self.obs, rewards, self.dones, infos = self.vec_env.step(actions)
+            
             self.obs = self.obs_to_tensors(self.obs)
             rewards = rewards.unsqueeze(-1)
-
             step_time_end = time.time()
-
             step_time += (step_time_end - step_time_start)
 
             # compute value of next state;
             if True:
                 # assume that 'obs_before_reset' == 'obs' if the episode is not done yet;
                 # sanity check for above condition;
-                for i in range(len(self.obs['obs'])):
-                    o = self.obs['obs'][i]
-                    no = infos['obs_before_reset'][i]
-                    diff = torch.norm(o - no)
-                    if diff > 1e-5:
-                        assert self.dones[i], ""
+                # for i in range(len(self.obs['obs'])):
+                #     o = self.obs['obs'][i]
+                #     no = infos['obs_before_reset'][i]
+                #     diff = torch.norm(o - no)
+                #     if diff > 1e-5:
+                #         assert self.dones[i], ""
 
                 next_obs = infos['obs_before_reset']
                 if self.normalize_input:
-                    self.running_mean_std.eval()
-                    next_obs = self.running_mean_std(next_obs)
+                    # do not update rms here;
+                    next_obs = curr_obs_rms.normalize(next_obs)
                 next_value = self.target_critic(next_obs)
                 grad_next_values.append(next_value)
 
@@ -366,14 +369,13 @@ class GradA2CAgent(A2CAgent):
                     or torch.isinf(infos['obs_before_reset'][id]).sum() > 0 \
                     or (torch.abs(infos['obs_before_reset'][id]) > 1e6).sum() > 0: # ugly fix for nan values
                     grad_next_values[-1][id] = 0.
-                elif self.current_lengths[id] < self.episode_max_length: # early termination
+                elif self.current_lengths[id] < self.episode_max_length - 1: # early termination
                     grad_next_values[-1][id] = 0.
             
             # add default reward;
             grad_rewards.append(rewards)
 
             # do not use reward shaper for now;
-
             if self.value_bootstrap and 'time_outs' in infos:
                 raise NotImplementedError()
                 
@@ -393,154 +395,110 @@ class GradA2CAgent(A2CAgent):
             self.current_rewards = self.current_rewards * not_dones.unsqueeze(1)
             self.current_lengths = self.current_lengths * not_dones
 
-            if (n + 1) % self.gi_num_step == 0 or \
-                (n + 1) == self.horizon_length:
+        '''
+        Update actor and critic networks using gradient descent.
+        (This scheme is borrowed from SHAC)
+        '''
 
-                '''
-                Update actor and critic networks using gradient descent.
-                (This scheme is borrowed from SHAC)
-                '''
+        # start and end of current subsequence;
+        last_fdones = self.dones.float()
 
-                # start and end of current subsequence;
+        # update actor;
+        if True:
 
-                n0 = (n // self.gi_num_step) * self.gi_num_step
-                n1 = n + 1
-
-                last_fdones = self.dones.float()
-
-                curr_grad_obses = grad_obses[n0:n1]
-                curr_grad_actions = grad_actions[n0:n1]
-                curr_grad_values = grad_values[n0:n1]
-                curr_grad_next_values = grad_next_values[n0:n1]
-                curr_grad_rewards = grad_rewards[n0:n1]
-                curr_grad_start = grad_start[n0:n1]
-                curr_grad_fdones = grad_fdones[n0:n1]
-
-                # update critic;
-
-                if True:
-
-                    with torch.no_grad():
-                        # compute advantage and add it to state value to get target values;
-                        curr_grad_advs = self.grad_advantages(self.tau,
-                                                                curr_grad_values,
-                                                                curr_grad_next_values, 
-                                                                curr_grad_rewards,
-                                                                curr_grad_fdones,
-                                                                last_fdones)
-
-                        target_values = []
-                        for i in range(len(curr_grad_advs)):
-                            target_values.append(curr_grad_advs[i] + curr_grad_values[i])
-
-                        th_obs = torch.cat(curr_grad_obses, dim=0)
-                        th_target_values = torch.cat(target_values, dim=0)
-                        batch_size = len(th_target_values) // self.critic_num_batch
-                        critic_dataset = CriticDataset(batch_size, th_obs, th_target_values)
-
-                    self.critic.train()
-                    critic_loss = 0
-                    for j in range(self.critic_iterations):
-                        
-                        total_critic_loss = 0
-                        batch_cnt = 0
-                        
-                        for i in range(len(critic_dataset)):
-                        
-                            batch_sample = critic_dataset[i]
-                            self.critic_optimizer.zero_grad()
-
-                            predicted_values = self.critic(batch_sample['obs']).squeeze(-1)
-                            if self.normalize_value:
-                                raise NotImplementedError()
-                                predicted_values = self.value_mean_std(predicted_values, True)
-                            
-                            target_values = batch_sample['target_values']
-                            training_critic_loss = torch.mean((predicted_values - target_values) ** 2, dim=0)
-                            training_critic_loss.backward()
-                            
-                            # ugly fix for simulation nan problem
-                            for params in self.critic.parameters():
-                                params.grad.nan_to_num_(0.0, 0.0, 0.0)
-
-                            if self.truncate_grads:
-                                nn.utils.clip_grad_norm_(self.critic.parameters(), self.grad_norm)
-
-                            self.critic_optimizer.step()
-
-                            total_critic_loss += training_critic_loss
-                            batch_cnt += 1
-                        
-                        critic_loss = (total_critic_loss / batch_cnt).detach().cpu().item()
-                        print('value iter {}/{}, loss = {:7.6f}'.format(j + 1, self.critic_iterations, critic_loss), end='\r')
-
-                # update actor;
-
-                if True:
-
-                    # compute loss for actor network and update;
-                    # this equals to GAE(1) of the first term;
-                    curr_grad_advs = self.grad_advantages(1.0, 
-                                                        curr_grad_values, 
-                                                        curr_grad_next_values,
-                                                        curr_grad_rewards,
-                                                        curr_grad_fdones,
-                                                        last_fdones)
-                    
-                    # add value of the states;
-                    for i in range(len(curr_grad_values)):
-                        curr_grad_advs[i] = curr_grad_advs[i] + curr_grad_values[i]
-
-                    # compute loss;
-                    actor_loss: torch.Tensor = -self.grad_advantages_first_terms_sum(curr_grad_advs, curr_grad_start)
-                    actor_loss = actor_loss / ((n1 - n0) * self.num_actors)
-
-                    # update actor;
-                    self.actor_optimizer.zero_grad()
-                    actor_loss.backward()
-                    grad_norm_before_clip = tu.grad_norm(self.actor.parameters())
-                    if self.truncate_grads:
-                        torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.grad_norm)    
-                    grad_norm_after_clip = tu.grad_norm(self.actor.parameters()) 
-
-                    self.actor_optimizer.step()
-                    # print('actor , grad norm before clip = {:7.6f}'.format(grad_norm_before_clip.detach().cpu().item()))
-
-                    # get grads of actions to get alpha-policy later;
-                    if True:
-
-                        with torch.no_grad():
-
-                            curr_adv_grads = []
-                            for action in curr_grad_actions:
-                                # multiply (-1) because we computed grad of negative sum of advantages;
-                                curr_adv_grads.append(-action.grad)
-
-                        grad_adv_grads += curr_adv_grads
-
-                # update target critic;
-                # this has to be done after actor update, because [target_critic] is involved in
-                # computing actor loss;
-                with torch.no_grad():
-                    alpha = self.target_critic_alpha
-                    for param, param_targ in zip(self.critic.parameters(), self.target_critic.parameters()):
-                        param_targ.data.mul_(alpha)
-                        param_targ.data.add_((1. - alpha) * param.data)
-
-        # compute advantages that would be used for RL update;
-        with torch.no_grad():
-            last_fdones = self.dones.float()
-
-            grad_advs = self.grad_advantages(self.tau,
-                                                grad_values,
-                                                grad_next_values, 
+            # compute loss for actor network and update;
+            # this equals to GAE(1) of the first term;
+            curr_grad_advs = self.grad_advantages(1.0, 
+                                                grad_values, 
+                                                grad_next_values,
                                                 grad_rewards,
                                                 grad_fdones,
-                                                last_fdones,)
+                                                last_fdones)
+            
+            # add value of the states;
+            for i in range(len(grad_values)):
+                curr_grad_advs[i] = curr_grad_advs[i] + grad_values[i]
 
-        for i in range(len(grad_adv_grads)):
-            grad_adv_grads[i] = grad_adv_grads[i].unsqueeze(0)
-        self.experience_buffer.tensor_dict['adv_grads'] = torch.cat(grad_adv_grads, dim=0).detach()
+            # compute loss;
+            actor_loss: torch.Tensor = -self.grad_advantages_first_terms_sum(curr_grad_advs, grad_start)
+            actor_loss = actor_loss / (self.gi_num_step * self.num_actors * self.num_agents)
+
+            # update actor;
+            self.actor_optimizer.zero_grad()
+            actor_loss.backward()
+            grad_norm_before_clip = tu.grad_norm(self.actor.parameters())
+            if self.truncate_grads:
+                torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.grad_norm)    
+            grad_norm_after_clip = tu.grad_norm(self.actor.parameters()) 
+
+            self.actor_optimizer.step()
+            # print('actor , grad norm before clip = {:7.6f}'.format(grad_norm_before_clip.detach().cpu().item()))
+
+        # update critic;
+        if True:
+
+            with torch.no_grad():
+                # compute advantage and add it to state value to get target values;
+                curr_grad_advs = self.grad_advantages(self.tau,
+                                                        grad_values,
+                                                        grad_next_values, 
+                                                        grad_rewards,
+                                                        grad_fdones,
+                                                        last_fdones)
+                grad_advs = curr_grad_advs
+
+                target_values = []
+                for i in range(len(curr_grad_advs)):
+                    target_values.append(curr_grad_advs[i] + grad_values[i])
+
+                th_obs = torch.cat(grad_obses, dim=0)
+                th_target_values = torch.cat(target_values, dim=0)
+                batch_size = len(th_target_values) // self.critic_num_batch
+                critic_dataset = CriticDataset(batch_size, th_obs, th_target_values)
+
+            self.critic.train()
+            critic_loss = 0
+            for j in range(self.critic_iterations):
+                
+                total_critic_loss = 0
+                batch_cnt = 0
+                
+                for i in range(len(critic_dataset)):
+                
+                    batch_sample = critic_dataset[i]
+                    self.critic_optimizer.zero_grad()
+
+                    predicted_values = self.critic(batch_sample['obs']).squeeze(-1)
+                    if self.normalize_value:
+                        raise NotImplementedError()
+                        predicted_values = self.value_mean_std(predicted_values, True)
+                    
+                    target_values = batch_sample['target_values']
+                    training_critic_loss = torch.mean((predicted_values - target_values) ** 2, dim=0)
+                    training_critic_loss.backward()
+                    
+                    # ugly fix for simulation nan problem
+                    for params in self.critic.parameters():
+                        params.grad.nan_to_num_(0.0, 0.0, 0.0)
+
+                    if self.truncate_grads:
+                        nn.utils.clip_grad_norm_(self.critic.parameters(), self.grad_norm)
+
+                    self.critic_optimizer.step()
+
+                    total_critic_loss += training_critic_loss
+                    batch_cnt += 1
+                
+                critic_loss = (total_critic_loss / batch_cnt).detach().cpu().item()
+                print('value iter {}/{}, loss = {:7.6f}'.format(j + 1, self.critic_iterations, critic_loss), end='\r')
+
+        # update target critic;
+        with torch.no_grad():
+            alpha = self.target_critic_alpha
+            for param, param_targ in zip(self.critic.parameters(), self.target_critic.parameters()):
+                param_targ.data.mul_(alpha)
+                param_targ.data.add_((1. - alpha) * param.data)
+
         self.clear_experience_buffer_grads()
 
         with torch.no_grad():
@@ -673,16 +631,22 @@ class GradA2CAgent(A2CAgent):
         
         state = super().get_full_state_weights()
 
-        state['gi_max_alpha'] = self.gi_max_alpha
-
+        state['gi_actor'] = self.actor.state_dict()
+        state['gi_critic'] = self.critic.state_dict()
+        state['gi_target_critic'] = self.target_critic.state_dict()
+        if self.normalize_input:
+            state['gi_obs_rms'] = self.obs_rms        
         return state
 
     def set_full_state_weights(self, weights):
         
         super().set_full_state_weights(weights)
 
-        self.gi_max_alpha = weights['gi_max_alpha']
-
+        self.actor.load_state_dict(weights['gi_actor'])
+        self.critic.load_state_dict(weights['gi_critic'])
+        self.target_critic.load_state_dict(weights['gi_target_critic'])
+        if self.normalize_input:
+            self.actor.obs_rms = weights['gi_obs_rms'].to(self.ppo_device)
     
     def calc_gradients(self, input_dict):
 
@@ -713,7 +677,7 @@ class GradA2CAgent(A2CAgent):
             curr_std = curr_std.expand(curr_mu.shape[0], -1).clone()
         neglogp = self.neglogp(actions_batch, curr_mu, curr_std, torch.log(curr_std))
 
-        a_loss = _grad_common_losses.alpha_actor_loss(old_action_log_probs_batch, neglogp, advantage, self.ppo, curr_e_clip, initial_ratio)
+        a_loss, worse_ratio = _grad_common_losses.alpha_actor_loss(old_action_log_probs_batch, neglogp, advantage, self.ppo, curr_e_clip, initial_ratio)
         c_loss = torch.zeros((1,), device=self.ppo_device)
         b_loss = self.bound_loss(curr_mu)
 
@@ -753,7 +717,7 @@ class GradA2CAgent(A2CAgent):
                 
         self.train_result = (a_loss, c_loss, entropy, \
             kl_dist, self.last_lr, lr_mul, \
-            curr_mu.detach(), curr_std.detach(), b_loss)
+            curr_mu.detach(), curr_std.detach(), b_loss, worse_ratio)
 
     def update_lr(self, lr):
         if self.multi_gpu:
@@ -767,6 +731,7 @@ class GradA2CAgent(A2CAgent):
         #if self.has_central_value:
         #    self.central_value_net.update_lr(lr)
 
+    '''
     def init_alpha(self, old_mu, old_sigma):
         
         model = self
@@ -799,9 +764,11 @@ class GradA2CAgent(A2CAgent):
             corr_loss.backward()
             self.gi_alpha_optim.step()
             with torch.no_grad():
-                self.gi_alpha = torch.clamp(self.gi_alpha, 0., self.gi_max_alpha)
-            self.gi_alpha.requires_grad = True
-
+                # @BUGFIX: https://stackoverflow.com/questions/59192705/how-to-apply-bounds-on-a-variable-when-performing-optimisation-in-pytorch
+                self.gi_alpha[:] = torch.clamp(self.gi_alpha, 0., self.gi_max_alpha)
+            if self.gi_alpha == 0. or self.gi_alpha == self.gi_max_alpha:
+                break
+            
         with torch.no_grad():
 
             curr_alpha = self.gi_alpha.cpu().item()
@@ -827,3 +794,5 @@ class GradA2CAgent(A2CAgent):
             self.dataset.values_dict['actions'] = p_actions
             self.dataset.values_dict['advantages'] = p_advantages
             #self.dataset.values_dict['initial_ratio'] = initial_ratio
+    '''
+    

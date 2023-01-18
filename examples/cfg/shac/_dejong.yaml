@@ -1,6 +1,6 @@
 params:  
   diff_env:
-    name: AckleyEnv
+    name: DejongEnv
     episode_length: 1
 
   network:
@@ -15,12 +15,12 @@ params:
       activation: elu
 
   config:
-    name: df_ackley_shac
-    actor_learning_rate: 1e-3 # adam
+    name: df_dejong_shac
+    actor_learning_rate: 4e-2 # adam
     critic_learning_rate: 1e-3 # adam
     lr_schedule: constant # ['constant', 'linear']
     target_critic_alpha: 0.2
-    obs_rms: True
+    obs_rms: False
     ret_rms: False
     critic_iterations: 16
     critic_method: td-lambda # ['td-lambda', 'one-step']
@@ -28,7 +28,7 @@ params:
     num_batch: 4
     gamma: 0.99
     betas: [0.7, 0.95] # adam
-    max_epochs: 500
+    max_epochs: 200
     steps_num: 1
     grad_norm: 1.0
     truncate_grads: True

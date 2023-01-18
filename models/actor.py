@@ -68,7 +68,7 @@ class ActorStochasticMLP(nn.Module):
             
         self.mu_net = nn.Sequential(*modules).to(device)
 
-        logstd = cfg_network.get('actor_logstd_init', 0.0)
+        logstd = cfg_network.get('actor_logstd_init', -1.0)
 
         self.logstd = torch.nn.Parameter(torch.ones(action_dim, dtype=torch.float32, device=device) * logstd)
 

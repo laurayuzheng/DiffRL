@@ -101,7 +101,13 @@ def alpha_actor_loss(old_action_log_probs_batch, action_log_probs, advantage, is
                                 initial_ratio * (1.0 - curr_e_clip),
                                 initial_ratio * (1.0 + curr_e_clip))
         a_loss = torch.max(-surr1, -surr2)
+
+        # for stat;
+        num_worse_indices = len(torch.where(surr1 < surr2)[0])
+        num_total_indices = len(surr1)
+        worse_ratio = num_worse_indices / num_total_indices
     else:
         a_loss = (action_log_probs * advantage)
+        worse_ratio = -1.0
     
-    return a_loss
+    return a_loss, worse_ratio

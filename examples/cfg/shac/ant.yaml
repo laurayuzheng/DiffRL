@@ -20,7 +20,7 @@ params:
     name: df_ant_shac
     actor_learning_rate: 2e-3 # adam
     critic_learning_rate: 2e-3 # adam
-    lr_schedule: constant # ['constant', 'linear']
+    lr_schedule: linear # ['constant', 'linear']
     target_critic_alpha: 0.2
     obs_rms: True
     ret_rms: False
@@ -30,7 +30,7 @@ params:
     num_batch: 4
     gamma: 0.99
     betas: [0.7, 0.95] # adam
-    max_epochs: 300 #2000
+    max_epochs: 2000
     steps_num: 32
     grad_norm: 1.0 
     truncate_grads: True 
