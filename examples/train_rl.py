@@ -28,7 +28,7 @@ import torch
 
 from utils.common import *
 
-device = 'cpu'
+device = 'cuda:0'
 
 def create_dflex_env(**kwargs):
     env_fn = getattr(envs, cfg_train["params"]["diff_env"]["name"])
@@ -168,7 +168,7 @@ if __name__ == '__main__':
     with open(args.cfg, 'r') as f:
         cfg_train = yaml.load(f, Loader=yaml.SafeLoader)
 
-    if args.play or args.test:
+    if args.play or args.test:  
         cfg_train["params"]["config"]["num_actors"] = cfg_train["params"]["config"].get("player", {}).get("num_actors", 1)
 
     if not args.no_time_stamp:

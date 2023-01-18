@@ -92,7 +92,10 @@ def alpha_policy_correspondence_loss(actions, advantages, adv_grads, model, old_
 def alpha_actor_loss(old_action_log_probs_batch, action_log_probs, advantage, is_ppo, curr_e_clip, initial_ratio):
 
     if is_ppo:
-        ratio = torch.exp(old_action_log_probs_batch - action_log_probs)
+        ratio = old_action_log_probs_batch - action_log_probs
+        ratio = torch.clamp(ratio, max=16.0)        # prevent ratio becoming [inf];
+        ratio = torch.exp(ratio)
+        
         surr1 = advantage * ratio
         surr2 = advantage * torch.clamp(ratio, 
                                 initial_ratio * (1.0 - curr_e_clip),

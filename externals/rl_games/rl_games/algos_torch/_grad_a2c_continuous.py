@@ -96,6 +96,9 @@ class GradA2CAgent(A2CAgent):
 
         self.init_max_alpha(config)
 
+        self.gi_alpha = torch.tensor([0.], dtype=torch.float32, device=self.ppo_device, requires_grad=True)
+        self.gi_alpha_optim = torch.optim.Adam([self.gi_alpha])
+
         # episode length;
         self.episode_max_length = self.vec_env.env.episode_length
 
@@ -152,9 +155,9 @@ class GradA2CAgent(A2CAgent):
         kls = []
 
         # initialize alpha-policy;
-        # old_mu = self.dataset.values_dict['old_mu']
-        # old_sigma = self.dataset.values_dict['old_sigma']
-        # self.init_alpha(old_mu, old_sigma)
+        old_mu = self.dataset.values_dict['old_mu']
+        old_sigma = self.dataset.values_dict['old_sigma']
+        self.init_alpha(old_mu, old_sigma)
 
         if self.is_rnn:
             raise NotImplementedError()
@@ -417,27 +420,19 @@ class GradA2CAgent(A2CAgent):
 
                 if True:
 
-                    # compute advantage and add it to state value to get target values;
-                    # also compute gradient of advantage w.r.t. action here to get alpha-policy later;
-                    curr_grad_advs = self.grad_advantages(self.tau,
-                                                            curr_grad_values,
-                                                            curr_grad_next_values, 
-                                                            curr_grad_rewards,
-                                                            curr_grad_fdones,
-                                                            last_fdones)
-
-                    curr_grad_adv_grads = self.advantage_gradients_gae(curr_grad_actions, 
-                                                                        curr_grad_advs, 
-                                                                        curr_grad_start)
-
-                    grad_adv_grads += curr_grad_adv_grads
-
-                    target_values = []
-                    for i in range(len(curr_grad_advs)):
-                        target_values.append(curr_grad_advs[i] + curr_grad_values[i])
-
-                    # batchify;    
                     with torch.no_grad():
+                        # compute advantage and add it to state value to get target values;
+                        curr_grad_advs = self.grad_advantages(self.tau,
+                                                                curr_grad_values,
+                                                                curr_grad_next_values, 
+                                                                curr_grad_rewards,
+                                                                curr_grad_fdones,
+                                                                last_fdones)
+
+                        target_values = []
+                        for i in range(len(curr_grad_advs)):
+                            target_values.append(curr_grad_advs[i] + curr_grad_values[i])
+
                         th_obs = torch.cat(curr_grad_obses, dim=0)
                         th_target_values = torch.cat(target_values, dim=0)
                         batch_size = len(th_target_values) // self.critic_num_batch
@@ -496,6 +491,7 @@ class GradA2CAgent(A2CAgent):
                     for i in range(len(curr_grad_values)):
                         curr_grad_advs[i] = curr_grad_advs[i] + curr_grad_values[i]
 
+                    # compute loss;
                     actor_loss: torch.Tensor = -self.grad_advantages_first_terms_sum(curr_grad_advs, curr_grad_start)
                     actor_loss = actor_loss / ((n1 - n0) * self.num_actors)
 
@@ -509,6 +505,18 @@ class GradA2CAgent(A2CAgent):
 
                     self.actor_optimizer.step()
                     # print('actor , grad norm before clip = {:7.6f}'.format(grad_norm_before_clip.detach().cpu().item()))
+
+                    # get grads of actions to get alpha-policy later;
+                    if True:
+
+                        with torch.no_grad():
+
+                            curr_adv_grads = []
+                            for action in curr_grad_actions:
+                                # multiply (-1) because we computed grad of negative sum of advantages;
+                                curr_adv_grads.append(-action.grad)
+
+                        grad_adv_grads += curr_adv_grads
 
                 # update target critic;
                 # this has to be done after actor update, because [target_critic] is involved in
@@ -587,48 +595,6 @@ class GradA2CAgent(A2CAgent):
 
         return adv_sum
 
-    def advantage_gradients_gae(self, mb_actions, mb_advs, grad_start):
-
-        '''
-        Compute advantage gradients, of which size equals to (# timestep, # actors, # action size).
-        '''
-
-        adv_sum = self.grad_advantages_first_terms_sum(mb_advs, grad_start)
-
-        # compute gradients;
-
-        for action in mb_actions:
-            action.grad = None
-        # adv_sum.backward(retain_graph=True)
-
-        adv_grads = []
-        
-        num_timestep = grad_start.shape[0]
-        num_actors = grad_start.shape[1]
-
-        for action in mb_actions:
-            adv_grads.append(torch.zeros_like(action)) #action.grad.clone())
-            #action.grad = None
-
-        # reweight grads;
-
-        with torch.no_grad():
-
-            c = (1.0 / (self.gamma * self.tau))
-            cv = torch.ones((num_actors, 1), device=self.ppo_device)
-
-            for nt in range(num_timestep):
-
-                # if new episode has been started, set [cv] to 1; 
-                for na in range(num_actors):
-                    if grad_start[nt, na]:
-                        cv[na, 0] = 1.0
-
-                adv_grads[nt] = adv_grads[nt] * cv
-                cv = cv * c
-
-        return adv_grads
-
     def clear_experience_buffer_grads(self):
 
         '''
@@ -696,7 +662,7 @@ class GradA2CAgent(A2CAgent):
         dataset_dict['mu'] = n_mus
         dataset_dict['sigma'] = n_sigmas
         dataset_dict['adv_grads'] = adv_grads
-        dataset_dict['initial_ratio'] = torch.exp(neglogpacs - n_neglogpacs)
+        dataset_dict['initial_ratio'] = torch.ones_like(neglogpacs) # torch.exp(neglogpacs - n_neglogpacs)
 
         self.dataset.update_values_dict(dataset_dict)
 
@@ -802,34 +768,22 @@ class GradA2CAgent(A2CAgent):
         #    self.central_value_net.update_lr(lr)
 
     def init_alpha(self, old_mu, old_sigma):
-
-        if self.gi_max_alpha == 0:
-            
-            self.gi_alpha = 0
-            return
-
-        alphas: List[float] = np.arange(0, self.gi_max_alpha, 
-                                        (self.gi_max_alpha / 16)).tolist()
-        alphas.append(self.gi_max_alpha)
-
-        actions = self.dataset.values_dict['actions']
-        advantages = self.dataset.values_dict['advantages']
-        adv_grads = self.dataset.values_dict['adv_grads']
+        
         model = self
 
         with torch.no_grad():
 
+            actions = self.dataset.values_dict['actions']
+            advantages = self.dataset.values_dict['advantages']
+            adv_grads = self.dataset.values_dict['adv_grads']
             obs_batch = self.dataset.values_dict['obs']
 
             curr_mu, curr_std = self.actor.forward_dist(obs_batch)
             if curr_std.ndim == 1:
                 curr_std = curr_std.unsqueeze(0)                      
                 curr_std = curr_std.expand(curr_mu.shape[0], -1).clone()
-            
-        # objective for determining good alpha;
-        min_corr_loss = -1
 
-        for alpha in alphas:
+        for _ in range(8):
 
             corr_loss = _grad_common_losses.alpha_policy_correspondence_loss(actions,
                                                                             advantages,
@@ -839,30 +793,37 @@ class GradA2CAgent(A2CAgent):
                                                                             old_sigma,
                                                                             curr_mu,
                                                                             curr_std,
-                                                                            alpha)
+                                                                            self.gi_alpha)
 
-            if min_corr_loss < 0 or corr_loss < min_corr_loss:
+            self.gi_alpha_optim.zero_grad()
+            corr_loss.backward()
+            self.gi_alpha_optim.step()
+            with torch.no_grad():
+                self.gi_alpha = torch.clamp(self.gi_alpha, 0., self.gi_max_alpha)
+            self.gi_alpha.requires_grad = True
 
-                min_corr_loss = corr_loss
-                self.gi_alpha = alpha
+        with torch.no_grad():
 
-        self.writer.add_scalar("info/gi_alpha", self.gi_alpha, self.epoch_num)
-        self.writer.add_scalar("info/gi_alpha_loss", corr_loss, self.epoch_num)
+            curr_alpha = self.gi_alpha.cpu().item()
+            curr_loss = corr_loss.cpu().item()
 
-        print("gi alpha: {:.2f}".format(self.gi_alpha))
-        print("gi alpha loss: {:.2f}".format(min_corr_loss))
+            self.writer.add_scalar("info/gi_alpha", curr_alpha, self.epoch_num)
+            self.writer.add_scalar("info/gi_alpha_loss", curr_loss, self.epoch_num)
 
-        # update data;
+            print("gi alpha: {:.2f}".format(curr_alpha))
+            print("gi alpha loss: {:.2f}".format(curr_loss))
 
-        adv_grads_norm = torch.pow(torch.norm(adv_grads, p=2, dim=1), 2.0)
-        p_actions = actions + (adv_grads * self.gi_alpha)
-        p_advantages = advantages + (adv_grads_norm * self.gi_alpha)
+            # update data;
 
-        # [initial_ratio] must be literally equal to the ratio at the first iteration;
-        p_old_neglogp = model.neglogp(p_actions, curr_mu, curr_std, torch.log(curr_std))
-        old_neglogp = self.dataset.values_dict['old_logp_actions']
-        initial_ratio = torch.exp(old_neglogp - p_old_neglogp)
+            adv_grads_norm = torch.pow(torch.norm(adv_grads, p=2, dim=1), 2.0)
+            p_actions = actions + (adv_grads * self.gi_alpha)
+            p_advantages = advantages + (adv_grads_norm * self.gi_alpha)
 
-        self.dataset.values_dict['actions'] = p_actions
-        self.dataset.values_dict['advantages'] = p_advantages
-        self.dataset.values_dict['initial_ratio'] = initial_ratio
+            # [initial_ratio] must be literally equal to the ratio at the first iteration;
+            p_old_neglogp = model.neglogp(p_actions, curr_mu, curr_std, torch.log(curr_std))
+            old_neglogp = self.dataset.values_dict['old_logp_actions']
+            initial_ratio = torch.exp(old_neglogp - p_old_neglogp)
+
+            self.dataset.values_dict['actions'] = p_actions
+            self.dataset.values_dict['advantages'] = p_advantages
+            #self.dataset.values_dict['initial_ratio'] = initial_ratio
