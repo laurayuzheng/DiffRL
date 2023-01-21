@@ -207,14 +207,12 @@ class TrafficPaceCarEnv(DFlexEnv):
                 curr_vel = lane.curr_vel
                 rew = rew + torch.abs(curr_vel - self.desired_speed_limit).sum()
             rew = rew / self.num_idm_vehicle
-            self.rew_buf[i] = -rew * 0.01
 
-        # punish out of lane;
-        for i, env in enumerate(self.sim.env_list):
-            auto_min_offset = env.auto_vehicle_lane_distance.min(dim=1)[0]
-            auto_min_offset = torch.clip(auto_min_offset, min=0.)
-            punish = auto_min_offset.sum() / self.num_auto_vehicle
-            self.rew_buf[i] = self.rew_buf[i] - punish * 0.001
+            # [rew] is now average speed disparity, we normalize it to be less than 1.0;
+            rew = torch.clamp(rew / self.speed_limit, max=1.0)
+
+            # reward is at least 0;
+            self.rew_buf[i] = 1.0 - rew
         
         # reset agents
         self.reset_buf = torch.where(self.progress_buf > self.episode_length - 1, torch.ones_like(self.reset_buf), self.reset_buf)
@@ -224,4 +222,12 @@ class TrafficPaceCarEnv(DFlexEnv):
             collided = env.check_auto_collision()
             if collided:
                 self.reset_buf[i] = 1.0
-                self.rew_buf[i] = self.rew_buf[i] - 1000.0
+                self.rew_buf[i] = -1.0
+
+        # reset out of lane;
+        for i, env in enumerate(self.sim.env_list):
+            auto_min_offset = env.auto_vehicle_lane_distance.min(dim=1)[0]
+            auto_min_offset = torch.clip(auto_min_offset, min=0.)
+            if torch.any(auto_min_offset > 0.):
+                self.reset_buf[i] = 1.0
+                self.rew_buf[i] = -1.0

@@ -108,15 +108,26 @@ class FastMicroLane(BaseLane):
                     idx = i
                     break
 
-            self.vehicle_id = th.cat([self.vehicle_id[:idx], id, self.vehicle_id[idx:]])
-            self.curr_pos = th.cat([self.curr_pos[:idx], pos, self.curr_pos[idx:]])
-            self.curr_vel = th.cat([self.curr_vel[:idx], vel, self.curr_vel[idx:]])
-            self.accel_max = th.cat([self.accel_max[:idx], accel_max, self.accel_max[idx:]])
-            self.accel_pref = th.cat([self.accel_pref[:idx], accel_pref, self.accel_pref[idx:]])
-            self.target_vel = th.cat([self.target_vel[:idx], target_vel, self.target_vel[idx:]])
-            self.min_space = th.cat([self.min_space[:idx], min_space, self.min_space[idx:]])
-            self.time_pref = th.cat([self.time_pref[:idx], time_pref, self.time_pref[idx:]])
-            self.vehicle_length = th.cat([self.vehicle_length[:idx], vehicle_length, self.vehicle_length[idx:]])
+            if idx == -1:
+                self.vehicle_id = th.cat([self.vehicle_id, id])
+                self.curr_pos = th.cat([self.curr_pos, pos])
+                self.curr_vel = th.cat([self.curr_vel, vel])
+                self.accel_max = th.cat([self.accel_max, accel_max])
+                self.accel_pref = th.cat([self.accel_pref, accel_pref])
+                self.target_vel = th.cat([self.target_vel, target_vel])
+                self.min_space = th.cat([self.min_space, min_space])
+                self.time_pref = th.cat([self.time_pref, time_pref])
+                self.vehicle_length = th.cat([self.vehicle_length, vehicle_length])
+            else:
+                self.vehicle_id = th.cat([self.vehicle_id[:idx], id, self.vehicle_id[idx:]])
+                self.curr_pos = th.cat([self.curr_pos[:idx], pos, self.curr_pos[idx:]])
+                self.curr_vel = th.cat([self.curr_vel[:idx], vel, self.curr_vel[idx:]])
+                self.accel_max = th.cat([self.accel_max[:idx], accel_max, self.accel_max[idx:]])
+                self.accel_pref = th.cat([self.accel_pref[:idx], accel_pref, self.accel_pref[idx:]])
+                self.target_vel = th.cat([self.target_vel[:idx], target_vel, self.target_vel[idx:]])
+                self.min_space = th.cat([self.min_space[:idx], min_space, self.min_space[idx:]])
+                self.time_pref = th.cat([self.time_pref[:idx], time_pref, self.time_pref[idx:]])
+                self.vehicle_length = th.cat([self.vehicle_length[:idx], vehicle_length, self.vehicle_length[idx:]])
 
     def add_tail_vehicle_tensor(self, 
                                 id: th.Tensor,

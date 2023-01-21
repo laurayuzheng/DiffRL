@@ -22,7 +22,7 @@ class PaceCarRoadNetwork(ParallelRoadNetwork):
                     num_all_lane: int,
                     device):
 
-        super().__init__(speed_limit, num_idm_vehicle, num_auto_vehicle, num_all_lane, device)
+        super().__init__(speed_limit, num_auto_vehicle, num_idm_vehicle, num_all_lane, device)
 
         '''
         In this problem, [desired_speed_limit] is the very speed limit that
