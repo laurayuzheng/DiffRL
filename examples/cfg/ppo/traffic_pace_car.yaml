@@ -39,7 +39,7 @@ params:
   load_path: nn/df_traffic_pace_car.pth
 
   config:
-    device: cpu
+    #device: cpu
     name: df_traffic_pace_car_ppo
     env_name: dflex
     multi_gpu: False
@@ -57,7 +57,7 @@ params:
     lr_threshold: 0.008
     kl_threshold: 0.008
     score_to_win: 20000
-    max_epochs: 500
+    max_epochs: 2000
     save_best_after: 50
     save_frequency: 100
     grad_norm: 1.0
@@ -72,6 +72,10 @@ params:
     clip_value: True
     seq_len: 4
     bounds_loss_coef: 0.0001
+
+    defer_summaries_sec: 0.001
+    summaries_interval_sec_min: 0.001
+    summaries_interval_sec_max: 0.002
     
     player:
       # render: True

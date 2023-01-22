@@ -22,7 +22,7 @@ class PaceCarSim(ParallelTrafficSim):
             self.lane_length[i] = 1e6
 
             start = np.array([0, float(i) * lane_width])
-            end = np.array([self.lane_length[i], float(i) * lane_width])
+            end = np.array([self.lane_length[i].cpu().item(), float(i) * lane_width])
             
             line_type = [LineType.STRIPED, LineType.STRIPED]
             if i == 0:
