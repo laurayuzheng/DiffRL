@@ -32,17 +32,6 @@ class IDMLayer:
                 min_space: th.Tensor, 
                 time_pref: th.Tensor,
                 delta_time: th.Tensor):
-
-        # Check input validity        
-        IDMLayer.check_input(a_max, 
-                            a_pref, 
-                            v_curr, 
-                            v_target, 
-                            pos_delta, 
-                            vel_delta, 
-                            min_space, 
-                            time_pref,
-                            delta_time)
         
         optimal_spacing = IDMLayer.compute_optimal_spacing(
                             a_max, 
@@ -75,37 +64,6 @@ class IDMLayer:
         acc = th.where(v_next >= 0, acc, -v_curr / delta_time)
         
         return acc
-
-    @staticmethod
-    def check_input(a_max: th.Tensor, 
-                    a_pref: th.Tensor, 
-                    v_curr: th.Tensor, 
-                    v_target: th.Tensor, 
-                    pos_delta: th.Tensor, 
-                    vel_delta: th.Tensor, 
-                    min_space: th.Tensor, 
-                    time_pref: th.Tensor,
-                    delta_time: th.Tensor):
-        num_batch = a_max.shape[0]
-
-        assert a_max.ndim == 1, "Invalid Tensor shape"
-        assert a_pref.ndim == 1, "Invalid Tensor shape"
-        assert v_curr.ndim == 1, "Invalid Tensor shape"
-        assert v_target.ndim == 1, "Invalid Tensor shape"
-        assert pos_delta.ndim == 1, "Invalid Tensor shape"
-        assert vel_delta.ndim == 1, "Invalid Tensor shape"
-        assert min_space.ndim == 1, "Invalid Tensor shape"
-        assert time_pref.ndim == 1, "Invalid Tensor shape"
-        assert delta_time.ndim == 1, "Invalid Tensor shape"
-
-        assert a_max.shape[0] == num_batch, "Invalid Tensor shape"
-        assert a_pref.shape[0] == num_batch, "Invalid Tensor shape"
-        assert v_curr.shape[0] == num_batch, "Invalid Tensor shape"
-        assert v_target.shape[0] == num_batch, "Invalid Tensor shape"
-        assert pos_delta.shape[0] == num_batch, "Invalid Tensor shape"
-        assert vel_delta.shape[0] == num_batch, "Invalid Tensor shape"
-        assert min_space.shape[0] == num_batch, "Invalid Tensor shape"
-        assert delta_time.shape[0] == num_batch, "Invalid Tensor shape"
 
     @staticmethod
     def compute_optimal_spacing(a_max: th.Tensor, 

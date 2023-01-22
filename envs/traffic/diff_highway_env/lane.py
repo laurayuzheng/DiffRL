@@ -104,4 +104,6 @@ def straight_lane_distance(vehicle_position: th.Tensor,
     t_lane_offset = t_lane_end - t_lane_start
     t_lane_length = th.norm(t_lane_offset, p=2, dim=2)
 
-    return th.abs(lateral) + th.clamp(longitudinal - t_lane_length, min=0) + th.clamp(0 - longitudinal, min=0)
+    dist = th.abs(lateral) + th.clamp(longitudinal - t_lane_length, min=0) + th.clamp(0 - longitudinal, min=0)
+
+    return dist, longitudinal, lateral
