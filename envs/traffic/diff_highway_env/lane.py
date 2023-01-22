@@ -107,3 +107,24 @@ def straight_lane_distance(vehicle_position: th.Tensor,
     dist = th.abs(lateral) + th.clamp(longitudinal - t_lane_length, min=0) + th.clamp(0 - longitudinal, min=0)
 
     return dist, longitudinal, lateral
+
+# sine lane;
+def sine_lane_position_velocity(vehicle_longitudinal: th.Tensor, 
+                                    vehicle_lateral: th.Tensor,
+                                    vehicle_speed: th.Tensor, 
+                                    lane_start: th.Tensor,
+                                    lane_end: th.Tensor,
+                                    lane_heading: th.Tensor,
+                                    lane_direction: th.Tensor,
+                                    lane_direction_lateral: th.Tensor,
+                                    lane_amplitude: th.Tensor,
+                                    lane_pulsation: th.Tensor,
+                                    lane_phase: th.Tensor):
+
+    n_longitudinal = vehicle_longitudinal
+    n_lateral = vehicle_lateral + lane_amplitude * th.sin(lane_pulsation * n_longitudinal + lane_phase)
+    n_heading = straight_lane_heading(n_longitudinal)
+
+    position = straight_lane_position(n_longitudinal, n_lateral, vehicle_speed, lane_start, lane_end)
+    heading = n_heading + th.arctan()
+

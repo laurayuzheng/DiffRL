@@ -16,7 +16,7 @@ from highway_env.envs.common.graphics import EnvViewer
 class TrafficPaceCarEnv(DFlexEnv):
 
     def __init__(self, render=False, device='cuda:0', num_envs=64, seed=0, episode_length=1000, no_grad=True, stochastic_init=False, MM_caching_frequency = 1, early_termination = False,
-                num_auto_vehicle=1, num_idm_vehicle=5, num_lane=1, speed_limit=20.0, desired_speed_limit=10.0, no_steering=False):
+                num_auto_vehicle=4, num_idm_vehicle=12, num_lane=4, speed_limit=20.0, desired_speed_limit=10.0, no_steering=False):
 
         self.num_auto_vehicle = num_auto_vehicle
         self.num_idm_vehicle = num_idm_vehicle
@@ -182,9 +182,24 @@ class TrafficPaceCarEnv(DFlexEnv):
         self.rew_buf = self.rew_buf.detach()
 
         # average disparity to desired speed of idm vehicles;
-        idm_vehicle_speed_diff = torch.abs(self.sim.vehicle_speed[:, self.num_auto_vehicle:] - self.desired_speed_limit).mean(dim=1)
-        idm_vehicle_speed_diff = torch.clamp(idm_vehicle_speed_diff / self.speed_limit, max=1.0)
-        self.rew_buf = 1.0 - idm_vehicle_speed_diff
+        # idm_vehicle_speed_diff = self.sim.vehicle_speed[:, self.num_auto_vehicle:] - self.desired_speed_limit
+        # abs_idm_vehicle_speed_diff_a = torch.where(idm_vehicle_speed_diff < 0., torch.abs(idm_vehicle_speed_diff), torch.zeros_like(idm_vehicle_speed_diff)) * 1.
+        # abs_idm_vehicle_speed_diff_b = torch.where(idm_vehicle_speed_diff > 0., torch.abs(idm_vehicle_speed_diff), torch.zeros_like(idm_vehicle_speed_diff)) * 2.
+        # abs_idm_vehicle_speed_diff = (abs_idm_vehicle_speed_diff_a + abs_idm_vehicle_speed_diff_b).mean(dim=1)
+        # abs_idm_vehicle_speed_diff = torch.clamp(abs_idm_vehicle_speed_diff / (2. * (self.speed_limit - self.desired_speed_limit)), max=1.0)
+        abs_idm_vehicle_speed_diff = torch.abs(self.sim.vehicle_speed[:, self.num_auto_vehicle:] - self.desired_speed_limit).mean(dim=1)
+        abs_idm_vehicle_speed_diff = torch.clamp(abs_idm_vehicle_speed_diff / self.speed_limit, max=1.0)
+        self.rew_buf = (1.0 - abs_idm_vehicle_speed_diff)
+
+        # # penalty for excessive control;
+        # actions = self.actions.clone()
+        # actions[:, 0::2] = torch.abs(actions[:, 0::2].clone() / max(self.steering_bound, 1e-3))
+        # actions[:, 1::2] = torch.abs(actions[:, 1::2].clone() / max(self.acceleration_bound, 1e-3))
+        # actions_mean = actions.mean(dim=1)
+        # self.rew_buf = self.rew_buf - actions_mean * 0.001
+
+        # # minimum reward for survival;
+        # self.rew_buf = torch.clip(self.rew_buf, min=0.001)
         
         # reset agents
         self.reset_buf = torch.where(self.progress_buf > self.episode_length - 1, torch.ones_like(self.reset_buf), self.reset_buf)
