@@ -1,30 +1,22 @@
 params:  
   diff_env:
-    name: TrafficPaceCarEnv
+    name: TrafficRoundaboutEnv
     stochastic_env: True
-    episode_length: 1000
+    episode_length: 500
     MM_caching_frequency: 16
-
-    # num_auto_vehicle: 1
-    # num_idm_vehicle: 1
-    # num_lane: 1
-    # speed_limit: 20
-    # desired_speed_limit: 10
-    # no_steering: True
-    # render: True
 
   algo:
     name: grad_a2c_continuous
 
   load_checkpoint: False
-  load_path: nn/df_traffic_pace_car.pth
+  load_path: nn/df_traffic_roundabout.pth
 
   # load_checkpoint: True
   # load_path: ./examples/logs/ackley/grad_ppo/01-18-2023-11-16-13/nn/df_ackley.pth
 
   config:
     device: 'cpu'
-    name: df_traffic_pace_car_grad_ppo
+    name: df_traffic_roundabout_grad_ppo
     env_name: dflex
     multi_gpu: False
     ppo: True
@@ -88,7 +80,7 @@ params:
       lr_schedule: linear # [constant, linear]
       
       # LEARNING RATE FOR SHAC ACTOR UPDATE;
-      actor_learning_rate: 1e-3
+      actor_learning_rate: 4e-3
 
       # LEARNING RATE FOR SHAC CRITIC UPDATE;
       critic_learning_rate: 1e-3

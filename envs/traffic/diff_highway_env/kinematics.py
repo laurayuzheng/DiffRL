@@ -3,6 +3,16 @@ import numpy as np
 
 import torch as th
 
+def vehicle_velocity(heading: th.Tensor,
+                        speed: th.Tensor):
+
+    direction_x = th.cos(heading)
+    direction_y = th.sin(heading)
+    direction = th.stack([direction_x, direction_y], -1)
+
+    velocity = speed.unsqueeze(-1) * direction
+    return velocity
+
 def auto_vehicle_apply_action(position: th.Tensor,
                                 speed: th.Tensor,
                                 heading: th.Tensor,

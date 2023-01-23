@@ -18,3 +18,4 @@ from envs._rosenbrock import RosenbrockEnv
 from envs._dejong import DejongEnv
 
 from envs.traffic.pace_car.env import TrafficPaceCarEnv
+from envs.traffic.roundabout.env import TrafficRoundaboutEnv

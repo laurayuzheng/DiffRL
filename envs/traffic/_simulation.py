@@ -14,7 +14,7 @@ import torch as th
 
 class ParallelTrafficSim:
 
-    def __init__(self, num_env: int, num_auto_vehicle: int, num_idm_vehicle: int, num_lane: int, speed_limit: float, device):
+    def __init__(self, num_env: int, num_auto_vehicle: int, num_idm_vehicle: int, num_lane: int, speed_limit: float, no_steering: bool, device):
 
         self.num_env = num_env
         self.num_vehicle = num_auto_vehicle + num_idm_vehicle
@@ -22,6 +22,7 @@ class ParallelTrafficSim:
         self.num_idm_vehicle = num_idm_vehicle
         self.num_lane = num_lane
         self.speed_limit = speed_limit
+        self.no_steering = no_steering
         self.device = device
 
         self.reset()
@@ -34,6 +35,8 @@ class ParallelTrafficSim:
 
         self.next_lane: Dict[int, List[int]] = {}
         self.next_lane_tensor = th.zeros((self.num_lane, self.num_lane), dtype=th.int32, device=self.device)
+        self.next_lane_connectivity = th.zeros((self.num_lane, self.num_lane), dtype=th.int32, device=self.device)
+        self.next_lane_space = th.zeros((self.num_env, self.num_lane,), dtype=th.float32, device=self.device)
         
         self.lane_length = th.zeros((self.num_lane,), dtype=th.float32, device=self.device)
 
@@ -65,6 +68,9 @@ class ParallelTrafficSim:
         # sine lane info;
         self.sine_lane_start = th.zeros((self.num_lane, 2), dtype=th.float32, device=self.device)
         self.sine_lane_end = th.zeros((self.num_lane, 2), dtype=th.float32, device=self.device)
+        self.sine_lane_heading = th.zeros((self.num_lane,), dtype=th.float32, device=self.device)
+        self.sine_lane_direction = th.zeros((self.num_lane, 2), dtype=th.float32, device=self.device)
+        self.sine_lane_direction_lateral = th.zeros((self.num_lane, 2), dtype=th.float32, device=self.device)
         self.sine_lane_amplitude = th.zeros((self.num_lane,), dtype=th.float32, device=self.device)
         self.sine_lane_pulsation = th.zeros((self.num_lane,), dtype=th.float32, device=self.device)
         self.sine_lane_phase = th.zeros((self.num_lane,), dtype=th.float32, device=self.device)
@@ -75,6 +81,10 @@ class ParallelTrafficSim:
         self.circular_lane_start_phase = th.zeros((self.num_lane,), dtype=th.float32, device=self.device)
         self.circular_lane_end_phase = th.zeros((self.num_lane,), dtype=th.float32, device=self.device)
         self.circular_lane_clockwise = th.zeros((self.num_lane,), dtype=th.int32, device=self.device)
+
+        self.straight_lane_ids = []
+        self.sine_lane_ids = []
+        self.circular_lane_ids = []
 
     def reset_env(self, env_id):
         with th.no_grad():
@@ -95,6 +105,11 @@ class ParallelTrafficSim:
             self.vehicle_world_position[env_id] = 0.
             self.vehicle_world_velocity[env_id] = 0. 
 
+    def add_next_lane(self, prev_lane_id: int, next_lane_id: int):
+        if prev_lane_id not in self.next_lane.keys():
+            self.next_lane[prev_lane_id] = []
+        self.next_lane[prev_lane_id].append(next_lane_id)
+
     def fill_next_lane_tensor(self):
 
         for i in range(self.num_lane):
@@ -103,6 +118,13 @@ class ParallelTrafficSim:
             while j < self.num_lane:
                 self.next_lane_tensor[i, j] = next_lanes[j % len(next_lanes)]
                 j += 1
+
+        # connectivity;
+        for i in range(self.num_lane):
+            next_lanes = self.next_lane[i]
+            for j in range(self.num_lane):
+                if j in next_lanes:
+                    self.next_lane_connectivity[i, j] = 1
 
     def auto_vehicle_id(self, id: int):
 
@@ -115,15 +137,58 @@ class ParallelTrafficSim:
     def update_info(self):
 
         self.update_idm_world_info()
-        self.update_auto_local_info()
+        self.update_next_lane_info()
+        if not self.no_steering:
+            self.update_auto_local_info()
 
+    def update_next_lane_info(self):
+
+        INF = 1e7
+
+        vehicle_lane_id = self.vehicle_lane_id.clone()
+        vehicle_position = self.vehicle_position.clone()
+
+        # (num env, num vehicle, num lane)
+        lane_id_tensor = th.arange(0, self.num_lane, dtype=th.int32, device=self.device)
+        lane_id_tensor = lane_id_tensor.unsqueeze(0).unsqueeze(0).expand((self.num_env, self.num_vehicle, self.num_lane))
+        vehicle_lane_id_tensor = vehicle_lane_id.unsqueeze(-1).expand((self.num_env, self.num_vehicle, self.num_lane))
+        vehicle_lane_id_tensor = vehicle_lane_id_tensor - lane_id_tensor
+        vehicle_lane_membership_tensor = vehicle_lane_id_tensor == 0
+
+        # (num_env, num lane, num vehicle)
+        lane_vehicle_membership_tensor = vehicle_lane_membership_tensor.transpose(1, 2)
+        lane_vehicle_position_tensor = vehicle_position.unsqueeze(1).expand((self.num_env, self.num_lane, self.num_vehicle))
+        inf_tensor = self.lane_length.unsqueeze(0).unsqueeze(-1).expand((self.num_env, self.num_lane, self.num_vehicle))
+        lane_vehicle_position_tensor = th.where(lane_vehicle_membership_tensor, 
+                                                    lane_vehicle_position_tensor,
+                                                    inf_tensor)
+
+        lane_entering_space, lane_tail_vehicle_id = lane_vehicle_position_tensor.min(dim=2)
+        # @TODO
+        # lane_entering_space = lane_entering_space - self.vehicle_length[lane_tail_vehicle_id] * 0.5
+        lane_entering_space = lane_entering_space - 2.5
+
+        # (num_env, num_lane, num lane)
+        next_lane_connectivity = self.next_lane_connectivity.unsqueeze(0).expand((self.num_env, self.num_lane, self.num_lane))
+        next_lane_entering_space = lane_entering_space.unsqueeze(1).expand((self.num_env, self.num_lane, self.num_lane))
+        inf_tensor = th.ones_like(next_lane_entering_space) * INF
+        next_lane_entering_space = th.where(next_lane_connectivity == 1,
+                                            next_lane_entering_space,
+                                            inf_tensor)
+        self.next_lane_space = next_lane_entering_space.min(dim=2)[0]
+        
     def update_idm_world_info(self):
 
         '''
         Update world position, velocity, heading of idm vehicles.
         '''
         
-        idm_idx = self.idm_vehicle_id(0)
+        if self.no_steering:
+            idm_idx = 0 # self.idm_vehicle_id(0)
+            num_idm_vehicle = self.num_vehicle # self.num_idm_vehicle
+        else:
+            idm_idx = self.idm_vehicle_id(0)
+            num_idm_vehicle = self.num_idm_vehicle
 
         idm_longitudinal = self.vehicle_position[:, idm_idx:].clone()
         idm_lateral = th.zeros_like(idm_longitudinal)
@@ -143,14 +208,60 @@ class ParallelTrafficSim:
                                                 self.straight_lane_heading,
                                                 self.straight_lane_direction,
                                                 self.straight_lane_direction_lateral)
+        
+        # circular lane;
+        circular_idm_world_position, circular_idm_world_velocity, circular_idm_world_heading = \
+            circular_lane_position_velocity(idm_longitudinal, 
+                                                idm_lateral, 
+                                                idm_speed,
+                                                self.circular_lane_center,
+                                                self.circular_lane_radius,
+                                                self.circular_lane_start_phase,
+                                                self.circular_lane_end_phase,
+                                                self.circular_lane_clockwise)
 
         # sine lane;
-        # sine_idm_world_position, sine_idm_world_velocity, sine_idm_world_heading = \
-        #     pass
+        sine_idm_world_position, sine_idm_world_velocity, sine_idm_world_heading = \
+            sine_lane_position_velocity(idm_longitudinal, 
+                                                idm_lateral, 
+                                                idm_speed,
+                                                self.sine_lane_start,
+                                                self.sine_lane_end,
+                                                self.sine_lane_heading,
+                                                self.sine_lane_direction,
+                                                self.sine_lane_direction_lateral,
+                                                self.sine_lane_amplitude,
+                                                self.sine_lane_pulsation,
+                                                self.sine_lane_phase)
 
-        idm_world_position = straight_idm_world_position.view(self.num_env, self.num_idm_vehicle, self.num_lane, 2)
-        idm_world_velocity = straight_idm_world_velocity.view(self.num_env, self.num_idm_vehicle, self.num_lane, 2)
-        idm_world_heading = straight_idm_world_heading.view(self.num_env, self.num_idm_vehicle, self.num_lane)
+        idm_straight_world_position = straight_idm_world_position.view(self.num_env, num_idm_vehicle, self.num_lane, 2)
+        idm_straight_world_velocity = straight_idm_world_velocity.view(self.num_env, num_idm_vehicle, self.num_lane, 2)
+        idm_straight_world_heading = straight_idm_world_heading.view(self.num_env, num_idm_vehicle, self.num_lane)
+
+        idm_circular_world_position = circular_idm_world_position.view(self.num_env, num_idm_vehicle, self.num_lane, 2)
+        idm_circular_world_velocity = circular_idm_world_velocity.view(self.num_env, num_idm_vehicle, self.num_lane, 2)
+        idm_circular_world_heading = circular_idm_world_heading.view(self.num_env, num_idm_vehicle, self.num_lane)
+
+        idm_sine_world_position = sine_idm_world_position.view(self.num_env, num_idm_vehicle, self.num_lane, 2)
+        idm_sine_world_velocity = sine_idm_world_velocity.view(self.num_env, num_idm_vehicle, self.num_lane, 2)
+        idm_sine_world_heading = sine_idm_world_heading.view(self.num_env, num_idm_vehicle, self.num_lane)
+
+        # collect info;
+        idm_world_position = th.zeros_like(idm_straight_world_position)
+        idm_world_velocity = th.zeros_like(idm_straight_world_velocity)
+        idm_world_heading = th.zeros_like(idm_straight_world_heading)
+
+        idm_world_position[:, :, self.straight_lane_ids] = idm_straight_world_position[:, :, self.straight_lane_ids]
+        idm_world_velocity[:, :, self.straight_lane_ids] = idm_straight_world_velocity[:, :, self.straight_lane_ids]
+        idm_world_heading[:, :, self.straight_lane_ids] = idm_straight_world_heading[:, :, self.straight_lane_ids]
+
+        idm_world_position[:, :, self.circular_lane_ids] = idm_circular_world_position[:, :, self.circular_lane_ids]
+        idm_world_velocity[:, :, self.circular_lane_ids] = idm_circular_world_velocity[:, :, self.circular_lane_ids]
+        idm_world_heading[:, :, self.circular_lane_ids] = idm_circular_world_heading[:, :, self.circular_lane_ids]
+
+        idm_world_position[:, :, self.sine_lane_ids] = idm_sine_world_position[:, :, self.sine_lane_ids]
+        idm_world_velocity[:, :, self.sine_lane_ids] = idm_sine_world_velocity[:, :, self.sine_lane_ids]
+        idm_world_heading[:, :, self.sine_lane_ids] = idm_sine_world_heading[:, :, self.sine_lane_ids]
 
         idm_lane_id = self.vehicle_lane_id[:, idm_idx:].clone()
         idm_lane_id_A = idm_lane_id.unsqueeze(-1).unsqueeze(-1).expand((-1, -1, -1, 2)).to(dtype=th.int64)
@@ -173,11 +284,12 @@ class ParallelTrafficSim:
         '''
 
         idm_idx = self.idm_vehicle_id(0)
+        num_auto_vehicle = self.num_auto_vehicle
 
         auto_world_position = self.vehicle_world_position[:, :idm_idx, :].clone()
         auto_world_position = auto_world_position.reshape((-1, 2))
 
-        auto_distance, auto_longitudinal, _ = \
+        auto_straight_distance, auto_straight_longitudinal, _ = \
                                     straight_lane_distance(
                                         auto_world_position, 
                                         self.straight_lane_start,
@@ -186,8 +298,47 @@ class ParallelTrafficSim:
                                         self.straight_lane_direction, 
                                         self.straight_lane_direction_lateral)
 
-        auto_distance = auto_distance.view(self.num_env, self.num_auto_vehicle, self.num_lane)
-        auto_longitudinal = auto_longitudinal.view(self.num_env, self.num_auto_vehicle, self.num_lane)
+        auto_circular_distance, auto_circular_longitudinal, _ = \
+                                    circular_lane_distance(
+                                        auto_world_position,
+                                        self.circular_lane_center,
+                                        self.circular_lane_radius,
+                                        self.circular_lane_start_phase,
+                                        self.circular_lane_end_phase,
+                                        self.circular_lane_clockwise,)
+
+        auto_sine_distance, auto_sine_longitudinal, _ = \
+                                    sine_lane_distance(
+                                        auto_world_position,
+                                        self.sine_lane_start,
+                                        self.sine_lane_end,
+                                        self.sine_lane_heading,
+                                        self.sine_lane_direction,
+                                        self.sine_lane_direction_lateral,
+                                        self.sine_lane_amplitude,
+                                        self.sine_lane_pulsation,
+                                        self.sine_lane_phase)
+
+        auto_straight_distance = auto_straight_distance.view(self.num_env, num_auto_vehicle, self.num_lane)
+        auto_straight_longitudinal = auto_straight_longitudinal.view(self.num_env, num_auto_vehicle, self.num_lane)
+
+        auto_circular_distance = auto_circular_distance.view(self.num_env, num_auto_vehicle, self.num_lane)
+        auto_circular_longitudinal = auto_circular_longitudinal.view(self.num_env, num_auto_vehicle, self.num_lane)
+
+        auto_sine_distance = auto_sine_distance.view(self.num_env, num_auto_vehicle, self.num_lane)
+        auto_sine_longitudinal = auto_sine_longitudinal.view(self.num_env, num_auto_vehicle, self.num_lane)
+
+        # collect correct info;
+        auto_distance = th.zeros_like(auto_straight_distance)
+        auto_longitudinal = th.zeros_like(auto_straight_longitudinal)
+
+        auto_distance[:, :, self.straight_lane_ids] = auto_straight_distance[:, :, self.straight_lane_ids]
+        auto_distance[:, :, self.circular_lane_ids] = auto_circular_distance[:, :, self.circular_lane_ids]
+        auto_distance[:, :, self.sine_lane_ids] = auto_sine_distance[:, :, self.sine_lane_ids]
+
+        auto_longitudinal[:, :, self.straight_lane_ids] = auto_straight_longitudinal[:, :, self.straight_lane_ids]
+        auto_longitudinal[:, :, self.circular_lane_ids] = auto_circular_longitudinal[:, :, self.circular_lane_ids]
+        auto_longitudinal[:, :, self.sine_lane_ids] = auto_sine_longitudinal[:, :, self.sine_lane_ids]
         
         min_auto_distance, min_auto_distance_idx = auto_distance.min(dim=2)
         
@@ -222,6 +373,7 @@ class ParallelTrafficSim:
         vehicle_lane_id = self.vehicle_lane_id.clone()
         vehicle_speed = self.vehicle_speed.clone()
         vehicle_length = self.vehicle_length.clone()
+        next_lane_space = self.next_lane_space.clone()
 
         vehicle_lane_id_a = vehicle_lane_id.unsqueeze(-1).unsqueeze(-1).expand((-1, -1, self.num_env, self.num_vehicle))
         vehicle_lane_id_b = vehicle_lane_id.unsqueeze(0).unsqueeze(0).expand((self.num_env, self.num_vehicle, -1, -1))
@@ -256,18 +408,20 @@ class ParallelTrafficSim:
         leading_vehicle_length = th.gather(vehicle_length, 1, leading_vehicle_id)
 
         vehicle_pos_delta = vehicle_pos_delta - (vehicle_length + leading_vehicle_length) * 0.5
-        vehicle_pos_delta = th.clip(vehicle_pos_delta, min=1e-3)
         vehicle_vel_delta = vehicle_speed - leading_vehicle_speed
 
         expanded_lane_length = self.lane_length.unsqueeze(0).expand((self.num_env, -1))
         vehicle_lane_length = th.gather(expanded_lane_length, 1, vehicle_lane_id.to(dtype=th.int64))
-        vehicle_max_pos_delta = vehicle_lane_length - vehicle_position - vehicle_length * 0.5 + 10.
+        expanded_next_lane_space = next_lane_space.unsqueeze(1).expand((self.num_env, self.num_vehicle, self.num_lane))
+        vehicle_next_lane_space = th.gather(expanded_next_lane_space, 2, vehicle_lane_id.unsqueeze(-1).to(dtype=th.int64)).squeeze(-1)
+        vehicle_max_pos_delta = vehicle_lane_length - vehicle_position - vehicle_length * 0.5 + vehicle_next_lane_space
         
         self.vehicle_pos_delta = vehicle_pos_delta
         self.vehicle_speed_delta = vehicle_vel_delta
 
         tmp_idx = th.where(vehicle_pos_delta > vehicle_max_pos_delta)
         self.vehicle_pos_delta[tmp_idx] = vehicle_max_pos_delta[tmp_idx]
+        self.vehicle_pos_delta = th.clip(self.vehicle_pos_delta, min=1e-3)
         self.vehicle_speed_delta[tmp_idx] = 0.
         
     def update_idm_vehicle_lane_membership(self):
@@ -292,25 +446,35 @@ class ParallelTrafficSim:
 
     def update_auto_vehicle(self, actions: th.Tensor, dt: float):
 
-        steering = actions[:, 0::2]
-        acceleration = actions[:, 1::2]
+        if self.no_steering:
 
-        steering = steering.reshape((-1,))
-        acceleration = acceleration.reshape((-1,))
+            accelerations = actions # (num env, num vehicle)
 
-        position = self.vehicle_world_position[:, :self.num_auto_vehicle, :].reshape((self.num_env * self.num_auto_vehicle, -1)).clone()
-        speed = self.vehicle_speed[:, :self.num_auto_vehicle].reshape((-1,)).clone()
-        heading = self.vehicle_world_heading[:, :self.num_auto_vehicle].reshape((-1,)).clone()
-        length = self.vehicle_length[:, :self.num_auto_vehicle].reshape((-1,)).clone()
+            curr_auto_position = self.vehicle_position[:, :self.num_auto_vehicle].clone()
+            curr_auto_speed = self.vehicle_speed[:, :self.num_auto_vehicle].clone()
 
-        np, nv, nh, ns = auto_vehicle_apply_action(position, speed, heading, length, steering, acceleration, dt)
-        
-        self.vehicle_world_position[:, :self.num_auto_vehicle, :] = np.reshape((self.num_env, self.num_auto_vehicle, -1))
-        self.vehicle_world_velocity[:, :self.num_auto_vehicle, :] = nv.reshape((self.num_env, self.num_auto_vehicle, -1))
-        self.vehicle_world_heading[:, :self.num_auto_vehicle] = nh.reshape((self.num_env, self.num_auto_vehicle))
-        self.vehicle_speed[:, :self.num_auto_vehicle] = ns.reshape((self.num_env, self.num_auto_vehicle))
+            self.vehicle_position[:, :self.num_auto_vehicle] = curr_auto_position + curr_auto_speed * dt
+            self.vehicle_speed[:, :self.num_auto_vehicle] = th.clamp(curr_auto_speed + accelerations * dt, min=0.)
 
-        return
+        else:
+
+            steering = actions[:, 0::2]
+            acceleration = actions[:, 1::2]
+
+            steering = steering.reshape((-1,))
+            acceleration = acceleration.reshape((-1,))
+
+            position = self.vehicle_world_position[:, :self.num_auto_vehicle, :].reshape((self.num_env * self.num_auto_vehicle, -1)).clone()
+            speed = self.vehicle_speed[:, :self.num_auto_vehicle].reshape((-1,)).clone()
+            heading = self.vehicle_world_heading[:, :self.num_auto_vehicle].reshape((-1,)).clone()
+            length = self.vehicle_length[:, :self.num_auto_vehicle].reshape((-1,)).clone()
+
+            np, nv, nh, ns = auto_vehicle_apply_action(position, speed, heading, length, steering, acceleration, dt)
+            
+            self.vehicle_world_position[:, :self.num_auto_vehicle, :] = np.reshape((self.num_env, self.num_auto_vehicle, -1))
+            self.vehicle_world_velocity[:, :self.num_auto_vehicle, :] = nv.reshape((self.num_env, self.num_auto_vehicle, -1))
+            self.vehicle_world_heading[:, :self.num_auto_vehicle] = nh.reshape((self.num_env, self.num_auto_vehicle))
+            self.vehicle_speed[:, :self.num_auto_vehicle] = ns.reshape((self.num_env, self.num_auto_vehicle))
     
     def forward(self, actions: th.Tensor, delta_time: float):
 
@@ -336,12 +500,12 @@ class ParallelTrafficSim:
         # 3. update pos and vel of vehicles;
         self.vehicle_position[:, self.num_auto_vehicle:] = (self.vehicle_position.clone() + self.vehicle_speed.clone() * delta_time)[:, self.num_auto_vehicle:]
         self.vehicle_speed[:, self.num_auto_vehicle:] = (self.vehicle_speed[:, self.num_auto_vehicle:].clone() + acc * delta_time)
-
-        # 6. move idm vehicles from lane to lane;
-        self.update_idm_vehicle_lane_membership()
         
         # 7. apply action and update state of auto vehicles;
         self.update_auto_vehicle(actions, delta_time)    
+
+        # 6. move idm vehicles from lane to lane;
+        self.update_idm_vehicle_lane_membership()
 
         self.update_info()
 
@@ -416,6 +580,76 @@ class ParallelTrafficSim:
         self.straight_lane_direction[lane_id] = self.tensorize_value(env_lane.direction)
         self.straight_lane_direction_lateral[lane_id] = self.tensorize_value(env_lane.direction_lateral)
         self.straight_lane_heading[lane_id] = self.tensorize_value(env_lane.heading)
+        self.lane_length[lane_id] = env_lane.length
+
+        self.straight_lane_ids.append(lane_id)
+
+        return lane_id
+
+    def make_circular_lane(self, 
+                            lane_id: int, 
+                            center: np.ndarray, 
+                            radius,
+                            start_phase,
+                            end_phase,
+                            clockwise,
+                            start_node: str, 
+                            end_node: str,
+                            line_types = None):
+
+        if line_types == None:
+            line_types = [LineType.CONTINUOUS, LineType.CONTINUOUS]
+        
+        # highway env lane;
+        env_lane = CircularLane(center, radius, start_phase, end_phase, clockwise, line_types=line_types)
+        self.hw_road.network.add_lane(start_node, end_node, env_lane)
+        self.hw_lane[lane_id] = env_lane
+        
+        # lane info;
+        self.circular_lane_center[lane_id] = self.tensorize_value(env_lane.center)
+        self.circular_lane_radius[lane_id] = self.tensorize_value(env_lane.radius)
+        self.circular_lane_clockwise[lane_id] = self.tensorize_value(1 if clockwise else 0)
+        self.circular_lane_start_phase[lane_id] = self.tensorize_value(env_lane.start_phase)
+        self.circular_lane_end_phase[lane_id] = self.tensorize_value(env_lane.end_phase)
+        self.lane_length[lane_id] = env_lane.length
+
+        self.circular_lane_ids.append(lane_id)
+
+        return lane_id
+
+    def make_sine_lane(self, 
+                        lane_id: int, 
+                        start_pos: np.ndarray,
+                        end_pos: np.ndarray,
+                        amplitude: float,
+                        pulsation: float,
+                        phase: float,
+                        start_node: str, 
+                        end_node: str,
+                        line_types = None):
+
+        if line_types == None:
+            line_types = [LineType.CONTINUOUS, LineType.CONTINUOUS]
+        
+        # highway env lane;
+        env_lane = SineLane(start_pos, end_pos, amplitude, pulsation, phase, line_types=line_types)
+        self.hw_road.network.add_lane(start_node, end_node, env_lane)
+        self.hw_lane[lane_id] = env_lane
+        
+        # lane info;
+        self.sine_lane_start[lane_id] = self.tensorize_value(env_lane.start)
+        self.sine_lane_end[lane_id] = self.tensorize_value(env_lane.end)
+        self.sine_lane_direction[lane_id] = self.tensorize_value(env_lane.direction)
+        self.sine_lane_direction_lateral[lane_id] = self.tensorize_value(env_lane.direction_lateral)
+        self.sine_lane_heading[lane_id] = self.tensorize_value(env_lane.heading)
+
+        self.sine_lane_amplitude[lane_id] = self.tensorize_value(env_lane.amplitude)
+        self.sine_lane_pulsation[lane_id] = self.tensorize_value(env_lane.pulsation)
+        self.sine_lane_phase[lane_id] = self.tensorize_value(env_lane.phase)
+
+        self.lane_length[lane_id] = env_lane.length
+
+        self.sine_lane_ids.append(lane_id)
 
         return lane_id
 

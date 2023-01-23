@@ -10,36 +10,33 @@ import dflex as df
 import numpy as np
 np.set_printoptions(precision=5, linewidth=256, suppress=True)
 
-from envs.traffic.pace_car.simulation import PaceCarSim
+from envs.traffic.roundabout.simulation import RoundaboutSim
 from highway_env.envs.common.graphics import EnvViewer
 
-class TrafficPaceCarEnv(DFlexEnv):
+class TrafficRoundaboutEnv(DFlexEnv):
 
-    def __init__(self, render=False, device='cuda:0', num_envs=64, seed=0, episode_length=1000, no_grad=True, stochastic_init=False, MM_caching_frequency = 1, early_termination = False,
-                num_auto_vehicle=3, num_idm_vehicle=9, num_lane=3, speed_limit=20.0, desired_speed_limit=10.0, no_steering=False):
+    def __init__(self, render=False, device='cuda:0', num_envs=64, seed=0, episode_length=500, no_grad=True, stochastic_init=False, MM_caching_frequency = 1, early_termination = False,
+                num_auto_vehicle=1, num_idm_vehicle=20, speed_limit=20.0, no_steering=True):
+
+        assert no_steering, "Roundabout Env does not support steering"
 
         self.num_auto_vehicle = num_auto_vehicle
         self.num_idm_vehicle = num_idm_vehicle
-        self.num_lane = num_lane
         self.speed_limit = speed_limit
-        self.desired_speed_limit = desired_speed_limit
         self.no_steering = no_steering
 
-        self.steering_bound = np.deg2rad(10.0)
-        if no_steering:
-            self.steering_bound = 0.0
         self.acceleration_bound = 8.0
 
         # pos, vel, idm properties;
         self.num_obs_per_vehicle = 2 + 2 + 6
 
         # steering, accelerations;
-        self.num_action_per_vehicle = 2
+        self.num_action_per_vehicle = 1
 
         num_obs = (num_idm_vehicle + num_auto_vehicle) * self.num_obs_per_vehicle
         num_act = num_auto_vehicle * self.num_action_per_vehicle
 
-        super(TrafficPaceCarEnv, self).__init__(num_envs, num_obs, num_act, episode_length, MM_caching_frequency, seed, no_grad, render, device)
+        super(TrafficRoundaboutEnv, self).__init__(num_envs, num_obs, num_act, episode_length, MM_caching_frequency, seed, no_grad, render, device)
 
         self.stochastic_init = stochastic_init
         self.early_termination = early_termination
@@ -51,10 +48,10 @@ class TrafficPaceCarEnv(DFlexEnv):
     def init_sim(self):
         
         self.dt = 0.03
-        self.sim = PaceCarSim(self.num_envs, 
+        self.sim = RoundaboutSim(self.num_envs, 
                                 self.num_auto_vehicle, 
                                 self.num_idm_vehicle, 
-                                self.num_lane,
+                                -1,
                                 self.speed_limit,
                                 self.no_steering,
                                 self.device)
@@ -65,7 +62,7 @@ class TrafficPaceCarEnv(DFlexEnv):
             env = self.sim # self.sim.env_list[0]
 
             if self.viewer is None:
-                config = {'screen_width': 720, 'screen_height': 480, 'offscreen_rendering': False}
+                config = {'screen_width': 1440, 'screen_height': 960, 'offscreen_rendering': False}
                 self.viewer = EnvViewer(env, config)
 
             self.enable_auto_render = True
@@ -94,8 +91,7 @@ class TrafficPaceCarEnv(DFlexEnv):
             actions = actions.view((self.num_envs, self.num_actions))
             
             actions = torch.clip(actions, -1., 1.)
-            actions[:, 0::2] = actions[:, 0::2] * self.steering_bound
-            actions[:, 1::2] = actions[:, 1::2] * self.acceleration_bound
+            actions = actions * self.acceleration_bound
             
             self.actions = actions
             
@@ -175,33 +171,15 @@ class TrafficPaceCarEnv(DFlexEnv):
         self.obs_buf = torch.cat([position_x, position_y, velocity_x, velocity_y, accel_max,
                                     accel_pref, target_speed, min_space, time_pref, vehicle_length], dim=1)
 
-        
         return
 
     def calculateReward(self):
 
         self.rew_buf = self.rew_buf.detach()
 
-        # average disparity to desired speed of idm vehicles;
-        # idm_vehicle_speed_diff = self.sim.vehicle_speed[:, self.num_auto_vehicle:] - self.desired_speed_limit
-        # abs_idm_vehicle_speed_diff_a = torch.where(idm_vehicle_speed_diff < 0., torch.abs(idm_vehicle_speed_diff), torch.zeros_like(idm_vehicle_speed_diff)) * 1.
-        # abs_idm_vehicle_speed_diff_b = torch.where(idm_vehicle_speed_diff > 0., torch.abs(idm_vehicle_speed_diff), torch.zeros_like(idm_vehicle_speed_diff)) * 2.
-        # abs_idm_vehicle_speed_diff = (abs_idm_vehicle_speed_diff_a + abs_idm_vehicle_speed_diff_b).mean(dim=1)
-        # abs_idm_vehicle_speed_diff = torch.clamp(abs_idm_vehicle_speed_diff / (2. * (self.speed_limit - self.desired_speed_limit)), max=1.0)
-        abs_idm_vehicle_speed_diff = torch.abs(self.sim.vehicle_speed[:, self.num_auto_vehicle:] - self.desired_speed_limit).mean(dim=1)
-        abs_idm_vehicle_speed_diff = torch.clamp(abs_idm_vehicle_speed_diff / self.speed_limit, max=1.0)
-        self.rew_buf = (1.0 - abs_idm_vehicle_speed_diff)
+        avg_idm_vehicle_speed = self.sim.vehicle_speed[:, self.num_auto_vehicle:].mean(dim=1)
+        self.rew_buf = torch.clamp(avg_idm_vehicle_speed / (self.speed_limit * 0.8), max=1.0)
 
-        # # penalty for excessive control;
-        # actions = self.actions.clone()
-        # actions[:, 0::2] = torch.abs(actions[:, 0::2].clone() / max(self.steering_bound, 1e-3))
-        # actions[:, 1::2] = torch.abs(actions[:, 1::2].clone() / max(self.acceleration_bound, 1e-3))
-        # actions_mean = actions.mean(dim=1)
-        # self.rew_buf = self.rew_buf - actions_mean * 0.001
-
-        # # minimum reward for survival;
-        # self.rew_buf = torch.clip(self.rew_buf, min=0.001)
-        
         # reset agents
         self.reset_buf = torch.where(self.progress_buf > self.episode_length - 1, torch.ones_like(self.reset_buf), self.reset_buf)
 
@@ -211,6 +189,7 @@ class TrafficPaceCarEnv(DFlexEnv):
         self.rew_buf[collided] = -1.0
 
         # reset out of lane;
-        outoflane = self.sim.check_auto_outoflane()
-        self.reset_buf[outoflane] = 1.0
-        self.rew_buf[collided] = -1.0
+        if not self.no_steering:
+            outoflane = self.sim.check_auto_outoflane()
+            self.reset_buf[outoflane] = 1.0
+            self.rew_buf[collided] = -1.0

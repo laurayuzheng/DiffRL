@@ -8,9 +8,9 @@ import torch as th
 
 class PaceCarSim(ParallelTrafficSim):
 
-    def __init__(self, num_env: int, num_auto_vehicle: int, num_idm_vehicle: int, num_lane: int, speed_limit: float, device):
+    def __init__(self, num_env: int, num_auto_vehicle: int, num_idm_vehicle: int, num_lane: int, speed_limit: float, no_steering: bool, device):
 
-        super().__init__(num_env, num_auto_vehicle, num_idm_vehicle, num_lane, speed_limit, device)
+        super().__init__(num_env, num_auto_vehicle, num_idm_vehicle, num_lane, speed_limit, no_steering, device)
 
     def reset(self):
 
