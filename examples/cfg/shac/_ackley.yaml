@@ -8,6 +8,7 @@ params:
     actor_mlp:
       units: [64, 64]
       activation: elu
+    actor_logstd_init: 0.0
 
     critic: CriticMLP
     critic_mlp:
@@ -18,7 +19,7 @@ params:
     name: df_ackley_shac
     actor_learning_rate: 1e-3 # adam
     critic_learning_rate: 1e-3 # adam
-    lr_schedule: constant # ['constant', 'linear']
+    lr_schedule: linear # ['constant', 'linear']
     target_critic_alpha: 0.2
     obs_rms: True
     ret_rms: False

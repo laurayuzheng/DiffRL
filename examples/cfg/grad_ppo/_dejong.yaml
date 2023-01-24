@@ -39,6 +39,7 @@ params:
   load_path: nn/df_dejong.pth
 
   config:
+    device: cpu
     name: df_dejong
     env_name: dflex
     multi_gpu: False
@@ -48,7 +49,7 @@ params:
     normalize_value: False
     reward_shaper:
       scale_value: 0.01
-    normalize_advantage: False
+    normalize_advantage: True
     gamma: 0.99
     tau: 0.95
     learning_rate: 3e-4
@@ -81,28 +82,35 @@ params:
     defer_summaries_sec: 0.001
     summaries_interval_sec_min: 0.001
     summaries_interval_sec_max: 0.002
-    
+
     gi_params:
       
-      max_alpha: 0.1
       num_step: 1
 
+      # THESE ARE THE REAL NETWORKS WE ARE GOING TO USE;
       network:
         actor: ActorStochasticMLP # ActorDeterministicMLP
         actor_mlp:
           units: [64, 64]
           activation: elu
+        actor_logstd_init: 0.0
 
         critic: CriticMLP
         critic_mlp:
           units: [64, 64]
           activation: elu
+
+      lr_schedule: linear # [constant, linear]
       
-      actor_learning_rate: 4e-2 # adam
-      critic_learning_rate: 1e-3 # adam
+      # LEARNING RATE FOR SHAC ACTOR UPDATE;
+      actor_learning_rate: 4e-2
+
+      # LEARNING RATE FOR SHAC CRITIC UPDATE;
+      critic_learning_rate: 2e-3
       critic_iterations: 16
       critic_num_batch: 4
       target_critic_alpha: 0.2
+      
       betas: [0.7, 0.95] # adam
       
     player:
