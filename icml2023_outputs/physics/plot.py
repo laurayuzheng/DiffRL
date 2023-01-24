@@ -38,7 +38,7 @@ def tabulate_events(dpath):
 ==========================================
 '''
 
-run_path = "/home/son/Documents/icml2023/DiffRL/icml2023_outputs/physics/cheetah"
+run_path = "/home/son/Documents/icml2023/DiffRL/icml2023_outputs/physics/snu_humanoid"
 grad_ppo_0_path = run_path + "/grad_ppo_0"
 grad_ppo_1e_4_path = run_path + "/grad_ppo_1e-4"
 grad_ppo_5e_4_path = run_path + "/grad_ppo_5e-4"
@@ -143,67 +143,67 @@ clrs = [
 with sns.axes_style("darkgrid"):
     n_timesteps = final_steps['grad_ppo_0']
     mean_rewards = final_rewards_mean['grad_ppo_0']
-    mean_rewards_spline = make_interp_spline(n_timesteps, mean_rewards)
+    #mean_rewards_spline = make_interp_spline(n_timesteps, mean_rewards)
     std_rewards = final_rewards_std['grad_ppo_0']
-    std_rewards_spline = make_interp_spline(n_timesteps, std_rewards)
-    n_timesteps = np.linspace(min_step, max_step, 200)
-    mean_rewards = mean_rewards_spline(n_timesteps)
-    std_rewards = std_rewards_spline(n_timesteps)
+    #std_rewards_spline = make_interp_spline(n_timesteps, std_rewards)
+    #n_timesteps = np.linspace(min_step, max_step, 200)
+    #mean_rewards = mean_rewards_spline(n_timesteps)
+    #std_rewards = std_rewards_spline(n_timesteps)
     plt.plot(n_timesteps, mean_rewards, c = clrs[0], label="Ours(GradPPO, 0)", linewidth=3)
     plt.fill_between(n_timesteps, mean_rewards - std_rewards, mean_rewards + std_rewards, alpha=0.3, facecolor = clrs[0])
 
     n_timesteps = final_steps['grad_ppo_1e_4']
     mean_rewards = final_rewards_mean['grad_ppo_1e_4']
-    mean_rewards_spline = make_interp_spline(n_timesteps, mean_rewards)
+    #mean_rewards_spline = make_interp_spline(n_timesteps, mean_rewards)
     std_rewards = final_rewards_std['grad_ppo_1e_4']
-    std_rewards_spline = make_interp_spline(n_timesteps, std_rewards)
-    n_timesteps = np.linspace(min_step, max_step, 200)
-    mean_rewards = mean_rewards_spline(n_timesteps)
-    std_rewards = std_rewards_spline(n_timesteps)
+    #std_rewards_spline = make_interp_spline(n_timesteps, std_rewards)
+    #n_timesteps = np.linspace(min_step, max_step, 200)
+    #mean_rewards = mean_rewards_spline(n_timesteps)
+    #std_rewards = std_rewards_spline(n_timesteps)
     plt.plot(n_timesteps, mean_rewards, c = clrs[1], label="Ours(GradPPO, 1e-4)", linewidth=3)
     plt.fill_between(n_timesteps, mean_rewards - std_rewards, mean_rewards + std_rewards, alpha=0.3, facecolor = clrs[1])
 
     n_timesteps = final_steps['grad_ppo_5e_4']
     mean_rewards = final_rewards_mean['grad_ppo_5e_4']
-    mean_rewards_spline = make_interp_spline(n_timesteps, mean_rewards)
+    #mean_rewards_spline = make_interp_spline(n_timesteps, mean_rewards)
     std_rewards = final_rewards_std['grad_ppo_5e_4']
-    std_rewards_spline = make_interp_spline(n_timesteps, std_rewards)
-    n_timesteps = np.linspace(min_step, max_step, 200)
-    mean_rewards = mean_rewards_spline(n_timesteps)
-    std_rewards = std_rewards_spline(n_timesteps)
+    #std_rewards_spline = make_interp_spline(n_timesteps, std_rewards)
+    #n_timesteps = np.linspace(min_step, max_step, 200)
+    #mean_rewards = mean_rewards_spline(n_timesteps)
+    #std_rewards = std_rewards_spline(n_timesteps)
     plt.plot(n_timesteps, mean_rewards, c = clrs[2], label="Ours(GradPPO, 5e-4)", linewidth=3)
     plt.fill_between(n_timesteps, mean_rewards - std_rewards, mean_rewards + std_rewards, alpha=0.3, facecolor = clrs[2])
 
     n_timesteps = final_steps['grad_ppo_1e_3']
     mean_rewards = final_rewards_mean['grad_ppo_1e_3']
-    mean_rewards_spline = make_interp_spline(n_timesteps, mean_rewards)
+    #mean_rewards_spline = make_interp_spline(n_timesteps, mean_rewards)
     std_rewards = final_rewards_std['grad_ppo_1e_3']
-    std_rewards_spline = make_interp_spline(n_timesteps, std_rewards)
-    n_timesteps = np.linspace(min_step, max_step, 200)
-    mean_rewards = mean_rewards_spline(n_timesteps)
-    std_rewards = std_rewards_spline(n_timesteps)
+    #std_rewards_spline = make_interp_spline(n_timesteps, std_rewards)
+    #n_timesteps = np.linspace(min_step, max_step, 200)
+    #mean_rewards = mean_rewards_spline(n_timesteps)
+    #std_rewards = std_rewards_spline(n_timesteps)
     plt.plot(n_timesteps, mean_rewards, c = clrs[3], label="Ours(GradPPO, 1e-3)", linewidth=3)
     plt.fill_between(n_timesteps, mean_rewards - std_rewards, mean_rewards + std_rewards, alpha=0.3, facecolor = clrs[3])
 
     n_timesteps = final_steps['grad_ppo_5e_3']
     mean_rewards = final_rewards_mean['grad_ppo_5e_3']
-    mean_rewards_spline = make_interp_spline(n_timesteps, mean_rewards)
+    #mean_rewards_spline = make_interp_spline(n_timesteps, mean_rewards)
     std_rewards = final_rewards_std['grad_ppo_5e_3']
-    std_rewards_spline = make_interp_spline(n_timesteps, std_rewards)
-    n_timesteps = np.linspace(min_step, max_step, 200)
-    mean_rewards = mean_rewards_spline(n_timesteps)
-    std_rewards = std_rewards_spline(n_timesteps)
+    #std_rewards_spline = make_interp_spline(n_timesteps, std_rewards)
+    #n_timesteps = np.linspace(min_step, max_step, 200)
+    #mean_rewards = mean_rewards_spline(n_timesteps)
+    #std_rewards = std_rewards_spline(n_timesteps)
     plt.plot(n_timesteps, mean_rewards, c = clrs[4], label="Ours(GradPPO, 5e-3)", linewidth=3)
     plt.fill_between(n_timesteps, mean_rewards - std_rewards, mean_rewards + std_rewards, alpha=0.3, facecolor = clrs[4])
 
     n_timesteps = final_steps['shac']
     mean_rewards = final_rewards_mean['shac']
-    mean_rewards_spline = make_interp_spline(n_timesteps, mean_rewards)
+    #mean_rewards_spline = make_interp_spline(n_timesteps, mean_rewards)
     std_rewards = final_rewards_std['shac']
-    std_rewards_spline = make_interp_spline(n_timesteps, std_rewards)
-    n_timesteps = np.linspace(min_step, max_step, 200)
-    mean_rewards = mean_rewards_spline(n_timesteps)
-    std_rewards = std_rewards_spline(n_timesteps)
+    #std_rewards_spline = make_interp_spline(n_timesteps, std_rewards)
+    #n_timesteps = np.linspace(min_step, max_step, 200)
+    #mean_rewards = mean_rewards_spline(n_timesteps)
+    #std_rewards = std_rewards_spline(n_timesteps)
     plt.plot(n_timesteps, mean_rewards, c = clrs[5], label="SHAC", linewidth=3)
     plt.fill_between(n_timesteps, mean_rewards - std_rewards, mean_rewards + std_rewards, alpha=0.3, facecolor = clrs[5])
 
