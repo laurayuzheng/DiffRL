@@ -5,6 +5,16 @@ import matplotlib.pyplot as plt
 
 hfont = {'fontname':'Roman'}
 
+params = {'legend.fontsize': 40,
+          'figure.figsize': (12 * 1.5, 9 * 1.5),
+         'axes.labelsize': 35,
+         'axes.titlesize': 20,
+         'xtick.labelsize':20,
+         'ytick.labelsize':20}
+#fig.set_figwidth(12)
+#fig.set_figheight(9)
+
+plt.rcParams.update(params)
 
 '''
 Render function itself
@@ -13,10 +23,10 @@ env = AckleyEnv(dim=1, device='cpu')
 x = th.arange(-500, 500, 1) / 500.0
 y = env.evaluate(x.unsqueeze(-1))
 
-plt.rcParams['font.size'] = 14
+# plt.rcParams['font.size'] = 14
 fig, ax1 = plt.subplots()
-fig.set_figwidth(6.4 * 1.4)
-fig.set_figheight(4.8 * 1.4)
+# fig.set_figwidth(6.4 * 1.4)
+# fig.set_figheight(4.8 * 1.4)
 
 ax1.set_xlabel('x')
 ax1.set_ylabel(r'$f(x)$')
@@ -40,7 +50,7 @@ dy = th.exp(dy)
 
 px_str = r'$p(x)$'
 ax2.set_ylabel(px_str)
-ax2.plot(dx.cpu().numpy(), dy.cpu().numpy(), color='blue', label=r'$p_{\theta_{old}}(x)$', linewidth=3.)
+ax2.plot(dx.cpu().numpy(), dy.cpu().numpy(), color='blue', label=r'$\alpha=0$', linewidth=3.)
 
 '''
 Render alpha policy
@@ -68,7 +78,7 @@ for ccx in cx:
         fx.append(ccx)
         fy.append(dy[idces].sum().cpu().item())
 
-ax2.plot(fx, fy, color='orange', label=r'$p_{\alpha}(x) (\alpha=0.001)$', linewidth=3.)
+ax2.plot(fx, fy, color='orange', label=r'$\alpha=1e-3$', linewidth=3.)
 
 kx_grad = kx.grad * 0.002
 tx = x.clone() + kx_grad
@@ -86,7 +96,7 @@ for ccx in cx:
         fx.append(ccx)
         fy.append(dy[idces].sum().cpu().item())
 
-ax2.plot(fx, fy, color='red', label=r'$p_{\alpha}(x) (\alpha=0.002)$', linewidth=3.)
+ax2.plot(fx, fy, color='red', label=r'$\alpha=2e-3$', linewidth=3.)
 
 ax2.legend(loc='upper right')
 
