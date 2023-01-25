@@ -39,6 +39,7 @@ params:
   load_path: nn/df_dejong.pth
 
   config:
+    device: cpu
     name: df_dejong
     env_name: dflex
     multi_gpu: False
