@@ -878,7 +878,7 @@ class GradA2CAgent(A2CAgent):
             mu = res_dict['mus']
             sigma = res_dict['sigmas']
 
-            a_loss = _grad_common_losses.alpha_actor_loss(old_action_log_probs_batch, action_log_probs, advantage, self.ppo, curr_e_clip, initial_ratio)
+            a_loss, _ = _grad_common_losses.alpha_actor_loss(old_action_log_probs_batch, action_log_probs, advantage, self.ppo, curr_e_clip, initial_ratio)
 
             # compute variance of our estimator;
 

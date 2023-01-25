@@ -31,6 +31,7 @@ class Runner:
         # grad rl;
         # self.algo_factory.register_builder('grad_a2c_continuous', lambda **kwargs : _grad_a2c_continuous_backup.GradA2CAgent(**kwargs))
         self.algo_factory.register_builder('grad_a2c_continuous', lambda **kwargs: _grad_a2c_continuous.GradA2CAgent(**kwargs))
+        self.algo_factory.register_builder('grad_a2c_continuous_backup', lambda **kwargs: _grad_a2c_continuous_backup.GradA2CAgent(**kwargs))
 
         self.player_factory = object_factory.ObjectFactory()
         self.player_factory.register_builder('a2c_continuous', lambda **kwargs : players.PpoPlayerContinuous(**kwargs))

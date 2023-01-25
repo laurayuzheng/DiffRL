@@ -2,7 +2,7 @@ params:
   diff_env:
     name: TrafficRoundaboutEnv
     stochastic_env: True
-    episode_length: 500
+    episode_length: 1000
     MM_caching_frequency: 16
 
   algo:
@@ -15,7 +15,6 @@ params:
   # load_path: ./examples/logs/ackley/grad_ppo/01-18-2023-11-16-13/nn/df_ackley.pth
 
   config:
-    device: 'cpu'
     name: df_traffic_roundabout_grad_ppo
     env_name: dflex
     multi_gpu: False
@@ -49,10 +48,10 @@ params:
     # LEARNING RATE FOR PPO UPDATE;
     # Keep [lr_schedule] to be "adaptive", and change [lr_threshold] and [kl_threshold]
     # to speficy desired KL div between updated policies;
-    learning_rate: 3e-4
-    lr_schedule: adaptive
-    lr_threshold: 0.008
-    kl_threshold: 0.008
+    learning_rate: 1e-4 #3e-4
+    lr_schedule: linear
+    lr_threshold: 0.00001
+    kl_threshold: 0.00001
 
     # grad informed
 
@@ -80,7 +79,7 @@ params:
       lr_schedule: linear # [constant, linear]
       
       # LEARNING RATE FOR SHAC ACTOR UPDATE;
-      actor_learning_rate: 4e-3
+      actor_learning_rate: 1e-4
 
       # LEARNING RATE FOR SHAC CRITIC UPDATE;
       critic_learning_rate: 1e-3

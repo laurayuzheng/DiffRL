@@ -1,0 +1,11 @@
+Metadata-Version: 2.1
+Name: diff-hybrid-traffic-sim
+Version: 0.0.0
+Summary: Differentiable hybrid traffic simulator
+Author: Sanghyun & Yiling
+Author-email: ['shh1295@gmail.com', 'yilingq97@gmail.com']
+License: UNKNOWN
+Platform: UNKNOWN
+
+Implementation of paper [Differentiable Hybrid Traffic Simulation]
+
