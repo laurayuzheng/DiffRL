@@ -16,7 +16,7 @@ from highway_env.envs.common.graphics import EnvViewer
 class TrafficRoundaboutEnv(DFlexEnv):
 
     def __init__(self, render=False, device='cuda:0', num_envs=64, seed=0, episode_length=500, no_grad=True, stochastic_init=False, MM_caching_frequency = 1, early_termination = False,
-                num_auto_vehicle=1, num_idm_vehicle=20, speed_limit=20.0, no_steering=True):
+                num_auto_vehicle=1, num_idm_vehicle=10, speed_limit=20.0, no_steering=True):
 
         assert no_steering, "Roundabout Env does not support steering"
 
@@ -184,12 +184,12 @@ class TrafficRoundaboutEnv(DFlexEnv):
         self.reset_buf = torch.where(self.progress_buf > self.episode_length - 1, torch.ones_like(self.reset_buf), self.reset_buf)
 
         # reset collided envs;
-        collided = self.sim.check_auto_collision()
-        self.reset_buf[collided] = 1.0
-        self.rew_buf[collided] = -1.0
+        # collided = self.sim.check_auto_collision()
+        # self.reset_buf[collided] = 1.0
+        # self.rew_buf[collided] = -1.0
 
         # reset out of lane;
-        if not self.no_steering:
-            outoflane = self.sim.check_auto_outoflane()
-            self.reset_buf[outoflane] = 1.0
-            self.rew_buf[collided] = -1.0
+        # if not self.no_steering:
+        #     outoflane = self.sim.check_auto_outoflane()
+        #     self.reset_buf[outoflane] = 1.0
+        #     self.rew_buf[collided] = -1.0

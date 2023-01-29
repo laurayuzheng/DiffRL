@@ -38,7 +38,7 @@ def tabulate_events(dpath):
 ==========================================
 '''
 
-run_path = "/home/son/Documents/icml2023/DiffRL/icml2023_outputs/physics/snu_humanoid"
+run_path = "/home/son/Documents/icml2023/DiffRL/icml2023_outputs/physics/humanoid"
 grad_ppo_0_path = run_path + "/grad_ppo_0"
 grad_ppo_1e_4_path = run_path + "/grad_ppo_1e-4"
 grad_ppo_5e_4_path = run_path + "/grad_ppo_5e-4"
@@ -92,17 +92,29 @@ for method in mpath.keys():
 
     for c_step in c_steps:
 
-        valid = True
+        # valid = True
 
-        for cr_step in list(steps[method].values()):
+        # for cr_step in list(steps[method].values()):
 
-            if c_step not in cr_step:
+        #     if c_step not in cr_step:
 
-                valid = False
-                break
+        #         valid = False
+        #         break
 
-        if not valid:
-            continue
+        # if not valid:
+        #     continue
+
+        # f_steps.append(c_step)
+        # fc_rewards = []
+
+        # for cr_step_key in list(steps[method].keys()):
+
+        #     cr_step = steps[method][cr_step_key]
+        #     index = cr_step.index(c_step)
+        #     reward = rewards[method][cr_step_key][index][0]
+        #     fc_rewards.append(reward)
+        
+        # f_rewards.append(fc_rewards)
 
         f_steps.append(c_step)
         fc_rewards = []
@@ -110,11 +122,15 @@ for method in mpath.keys():
         for cr_step_key in list(steps[method].keys()):
 
             cr_step = steps[method][cr_step_key]
-            index = cr_step.index(c_step)
+
+            index = min(range(len(cr_step)), key=lambda i: abs(cr_step[i]-c_step))
+
+            #index = cr_step.index(c_step)
             reward = rewards[method][cr_step_key][index][0]
             fc_rewards.append(reward)
         
         f_rewards.append(fc_rewards)
+
     
     final_steps[method] = np.array(f_steps)
     final_rewards[method] = np.array(f_rewards)
@@ -213,7 +229,7 @@ with sns.axes_style("darkgrid"):
     plt.legend()
 
     #plt.show()
-    plt.savefig(run_path + "/learning_graph.png")
+    plt.savefig(run_path + "/learning_graph.pdf")
 
 
 

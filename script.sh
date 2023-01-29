@@ -22,13 +22,23 @@
 # done
 
 
+# ITER=5
+
+# for (( i=0; i<${ITER}; i++ ))
+# do
+#     python ./examples/train_rl.py --cfg ./examples/cfg/ppo/traffic_pace_car.yaml --logdir ./examples/logs/traffic_pace_car/ppo --seed ${i}
+#     python ./examples/train_shac.py --cfg ./examples/cfg/shac/traffic_pace_car.yaml --logdir ./examples/logs/traffic_pace_car/shac --seed ${i} --device cpu
+#     python ./examples/train_rl.py --cfg ./examples/cfg/grad_ppo/traffic_pace_car.yaml --logdir ./examples/logs/traffic_pace_car/grad_ppo --seed ${i}
+# done
+
+
 ITER=5
 
 for (( i=0; i<${ITER}; i++ ))
 do
-    python ./examples/train_rl.py --cfg ./examples/cfg/ppo/traffic_pace_car.yaml --logdir ./examples/logs/traffic_pace_car/ppo --seed ${i}
-    python ./examples/train_shac.py --cfg ./examples/cfg/shac/traffic_pace_car.yaml --logdir ./examples/logs/traffic_pace_car/shac --seed ${i} --device cpu
-    python ./examples/train_rl.py --cfg ./examples/cfg/grad_ppo/traffic_pace_car.yaml --logdir ./examples/logs/traffic_pace_car/grad_ppo --seed ${i}
+    python ./examples/train_rl.py --cfg ./examples/cfg/ppo/_ackley.yaml --logdir ./examples/logs/ackley/ppo --seed ${i}
+    python ./examples/train_shac.py --cfg ./examples/cfg/shac/_ackley.yaml --logdir ./examples/logs/ackley/shac --seed ${i} --device cpu
+    python ./examples/train_rl.py --cfg ./examples/cfg/grad_ppo/_ackley.yaml --logdir ./examples/logs/ackley/grad_ppo --seed ${i}
 done
 
 

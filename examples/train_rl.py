@@ -28,13 +28,14 @@ import torch
 
 from utils.common import *
 
-device = 'cuda:0'
+device = 'cpu'
 
 def create_dflex_env(**kwargs):
     env_fn = getattr(envs, cfg_train["params"]["diff_env"]["name"])
 
     # grad informed RL requires gradient;
-    if cfg_train["params"]["algo"]["name"] == "grad_a2c_continuous":
+    if cfg_train["params"]["algo"]["name"] == "grad_a2c_continuous" or \
+        cfg_train["params"]["algo"]["name"] == "grad_a2c_continuous_a" :
         no_grad = False
     else:
         no_grad = True
@@ -62,7 +63,7 @@ class RLGPUEnv(vecenv.IVecEnv):
         self.env = env_configurations.configurations[config_name]['env_creator'](**kwargs)
 
         self.full_state = {}
-
+    
         self.rl_device = device #"cuda:0"
 
         self.full_state["obs"] = self.env.reset(force_reset=True).to(self.rl_device)
@@ -148,7 +149,7 @@ def get_args(): # TODO: delve into the arguments
         {"name": "--logdir", "type": str, "default": "logs/tmp/rl/"},
         {"name": "--no-time-stamp", "action": "store_true", "default": False,
             "help": "whether not add time stamp at the log path"},
-        {"name": "--gi_max_alpha", "type": float, "default": 0.1},
+        {"name": "--gi_alpha", "type": float, "default": 0.1},
         {"name": "--ppo_lr_threshold", "type": float, "default": 0.008},
         {"name": "--ppo_kl_threshold", "type": float, "default": 0.008},]
 
@@ -181,7 +182,7 @@ if __name__ == '__main__':
 
     # alpha
     if "gi_params" in cfg_train["params"]["config"].keys():
-        cfg_train["params"]["config"]["gi_params"]["max_alpha"] = args.gi_max_alpha
+        cfg_train["params"]["config"]["gi_params"]["alpha"] = args.gi_alpha
         cfg_train["params"]["config"]["gi_params"]["seed"] = args.seed
 
     # ppo thresh

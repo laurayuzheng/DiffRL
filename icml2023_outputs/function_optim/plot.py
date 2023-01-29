@@ -35,7 +35,7 @@ def tabulate_events(dpath):
 ==========================================
 '''
 
-run_path = "/home/son/Documents/icml2023/DiffRL/icml2023_outputs/function_optim/ackley_2048"
+run_path = "/home/son/Documents/icml2023/DiffRL/icml2023_outputs/function_optim/dejong_2048"
 grad_ppo_path = run_path + "/grad_ppo"
 ppo_path = run_path + "/ppo"
 shac_path = run_path + "/shac"
@@ -81,25 +81,16 @@ for method in ['grad_ppo', 'ppo', 'shac']:
 
     for c_step in c_steps:
 
-        valid = True
-
-        for cr_step in list(steps[method].values()):
-
-            if c_step not in cr_step:
-
-                valid = False
-                break
-
-        if not valid:
-            continue
-
         f_steps.append(c_step)
         fc_rewards = []
 
         for cr_step_key in list(steps[method].keys()):
 
             cr_step = steps[method][cr_step_key]
-            index = cr_step.index(c_step)
+
+            index = min(range(len(cr_step)), key=lambda i: abs(cr_step[i]-c_step))
+
+            #index = cr_step.index(c_step)
             reward = rewards[method][cr_step_key][index][0]
             fc_rewards.append(reward)
         
@@ -206,7 +197,7 @@ with sns.axes_style("darkgrid"):
     plt.legend()
 
     #plt.show()
-    plt.savefig(run_path + "/learning_graph.png")
+    plt.savefig(run_path + "/learning_graph.pdf")
 
 
 

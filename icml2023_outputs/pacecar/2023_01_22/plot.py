@@ -81,30 +81,21 @@ for method in ['grad_ppo', 'ppo', 'shac']:
 
     for c_step in c_steps:
 
-        valid = True
-
-        for cr_step in list(steps[method].values()):
-
-            if c_step not in cr_step:
-
-                valid = False
-                break
-
-        if not valid:
-            continue
-
         f_steps.append(c_step)
         fc_rewards = []
 
         for cr_step_key in list(steps[method].keys()):
 
             cr_step = steps[method][cr_step_key]
-            index = cr_step.index(c_step)
+
+            index = min(range(len(cr_step)), key=lambda i: abs(cr_step[i]-c_step))
+
+            #index = cr_step.index(c_step)
             reward = rewards[method][cr_step_key][index][0]
             fc_rewards.append(reward)
         
         f_rewards.append(fc_rewards)
-    
+
     final_steps[method] = np.array(f_steps)
     final_rewards[method] = np.array(f_rewards)
     final_rewards_mean[method] = np.mean(final_rewards[method], axis=1)
@@ -173,7 +164,7 @@ with sns.axes_style("darkgrid"):
     n_timesteps = np.linspace(min_step, max_step, 200)
     mean_rewards = mean_rewards_spline(n_timesteps)
     std_rewards = std_rewards_spline(n_timesteps)
-    plt.plot(n_timesteps, mean_rewards, c = clrs[0], label="Ours(GradPPO)", linewidth=3)
+    plt.plot(n_timesteps, mean_rewards, c = clrs[0], label="Ours(GradPPO)", linewidth=5)
     plt.fill_between(n_timesteps, mean_rewards - std_rewards, mean_rewards + std_rewards, alpha=0.3, facecolor = clrs[0])
 
 
@@ -185,7 +176,7 @@ with sns.axes_style("darkgrid"):
     n_timesteps = np.linspace(min_step, max_step, 200)
     mean_rewards = mean_rewards_spline(n_timesteps)
     std_rewards = std_rewards_spline(n_timesteps)
-    plt.plot(n_timesteps, mean_rewards, c = clrs[1], label="PPO", linewidth=3)
+    plt.plot(n_timesteps, mean_rewards, c = clrs[1], label="PPO", linewidth=5)
     plt.fill_between(n_timesteps, mean_rewards - std_rewards, mean_rewards + std_rewards, alpha=0.3, facecolor = clrs[1])
 
 
@@ -197,7 +188,7 @@ with sns.axes_style("darkgrid"):
     n_timesteps = np.linspace(min_step, max_step, 200)
     mean_rewards = mean_rewards_spline(n_timesteps)
     std_rewards = std_rewards_spline(n_timesteps)
-    plt.plot(n_timesteps, mean_rewards, c = clrs[2], label="SHAC", linewidth=3)
+    plt.plot(n_timesteps, mean_rewards, c = clrs[2], label="SHAC", linewidth=5)
     plt.fill_between(n_timesteps, mean_rewards - std_rewards, mean_rewards + std_rewards, alpha=0.3, facecolor = clrs[2])
 
     plt.xlabel("Step")
@@ -206,7 +197,7 @@ with sns.axes_style("darkgrid"):
     plt.legend()
 
     #plt.show()
-    plt.savefig(run_path + "/learning_graph.png")
+    plt.savefig(run_path + "/learning_graph.pdf")
 
 
 
