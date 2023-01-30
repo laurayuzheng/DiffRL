@@ -19,3 +19,9 @@ from envs._dejong import DejongEnv
 
 from envs.traffic.pace_car.env import TrafficPaceCarEnv
 from envs.traffic.roundabout.env import TrafficRoundaboutEnv
+
+from envs.traffic.single_pace_car.scenario_a.env import TrafficSinglePaceCarEnv_A
+from envs.traffic.single_pace_car.scenario_b.env import TrafficSinglePaceCarEnv_B
+from envs.traffic.single_pace_car.scenario_c.env import TrafficSinglePaceCarEnv_C
+from envs.traffic.single_pace_car.scenario_d.env import TrafficSinglePaceCarEnv_D
+from envs.traffic.single_pace_car.scenario_e.env import TrafficSinglePaceCarEnv_E

@@ -555,7 +555,7 @@ def circular_lane_local_coords(vehicle_position: th.Tensor,
 
     # dim = [num_vehicle, num_lane, #]
 
-    t_vehicle_position = vehicle_position.unsqueeze(-1).expand((-1, num_lane, -1))
+    t_vehicle_position = vehicle_position.unsqueeze(1).expand((-1, num_lane, -1))
     t_lane_center = lane_center.unsqueeze(0).expand((num_vehicle, -1, -1))
     t_lane_direction = lane_clockwise.unsqueeze(0).expand((num_vehicle, num_lane))
     t_lane_direction = th.where(t_lane_direction == 1, \

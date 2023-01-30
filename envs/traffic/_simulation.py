@@ -58,6 +58,8 @@ class ParallelTrafficSim:
         self.vehicle_world_velocity = th.zeros((self.num_env, self.num_vehicle, 2), dtype=th.float32, device=self.device)
         self.vehicle_world_heading = th.zeros((self.num_env, self.num_vehicle,), dtype=th.float32, device=self.device)
         
+        self.vehicle_pairwise_distance = th.zeros((self.num_env, self.num_vehicle, self.num_vehicle), dtype=th.float32, device=self.device)
+
         # straight lane info;
         self.straight_lane_start = th.zeros((self.num_lane, 2), dtype=th.float32, device=self.device)
         self.straight_lane_end = th.zeros((self.num_lane, 2), dtype=th.float32, device=self.device)
@@ -140,6 +142,8 @@ class ParallelTrafficSim:
         self.update_next_lane_info()
         if not self.no_steering:
             self.update_auto_local_info()
+
+        self.update_vehicle_pairwise_distance()
 
     def update_next_lane_info(self):
 
@@ -361,6 +365,21 @@ class ParallelTrafficSim:
         
         return
 
+    def update_vehicle_pairwise_distance(self):
+
+        vehicle_pos_a = self.vehicle_world_position.unsqueeze(0).unsqueeze(0).expand((self.num_env, self.num_vehicle, -1, -1, -1))
+        vehicle_pos_b = self.vehicle_world_position.unsqueeze(2).unsqueeze(2).expand((-1, -1, self.num_env, self.num_vehicle, -1))
+
+        pairwise_dist = vehicle_pos_a - vehicle_pos_b
+        pairwise_dist = th.diagonal(pairwise_dist, dim1=0, dim2=2)
+        pairwise_dist = th.transpose(pairwise_dist, 0, 3)
+        pairwise_dist = th.transpose(pairwise_dist, 2, 3)
+        pairwise_dist = th.norm(pairwise_dist, p=2, dim=-1)
+
+        self.vehicle_pairwise_distance = pairwise_dist
+
+        return
+
     def update_delta(self):
 
         '''
@@ -517,15 +536,8 @@ class ParallelTrafficSim:
 
         with th.no_grad():
 
-            vehicle_pos_a = self.vehicle_world_position.unsqueeze(0).unsqueeze(0).expand((self.num_env, self.num_vehicle, -1, -1, -1))
-            vehicle_pos_b = self.vehicle_world_position.unsqueeze(2).unsqueeze(2).expand((-1, -1, self.num_env, self.num_vehicle, -1))
-
-            pairwise_dist = vehicle_pos_a - vehicle_pos_b
-            pairwise_dist = th.diagonal(pairwise_dist, dim1=0, dim2=2)
-            pairwise_dist = th.transpose(pairwise_dist, 0, 3)
-            pairwise_dist = th.transpose(pairwise_dist, 2, 3)
-            pairwise_dist = th.norm(pairwise_dist, p=2, dim=-1)
-
+            pairwise_dist = self.vehicle_pairwise_distance
+            
             tmp_add = th.eye(self.num_vehicle, dtype=th.float32, device=self.device).unsqueeze(0) * 100.
             pairwise_dist = pairwise_dist + tmp_add - 2.5
             auto_dist = pairwise_dist[:, :self.num_auto_vehicle, :]
