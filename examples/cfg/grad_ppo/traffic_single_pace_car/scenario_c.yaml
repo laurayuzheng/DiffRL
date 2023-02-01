@@ -12,7 +12,7 @@ params:
   load_path: nn/df_traffic_pace_car.pth
 
   # load_checkpoint: True
-  # load_path: ./examples/logs/ackley/grad_ppo/01-18-2023-11-16-13/nn/df_ackley.pth
+  # load_path: ./examples/logs/traffic_single_pace_car/scenario_c/grad_ppo/01-31-2023-13-48-48/nn/last_df_traffic_pace_car_grad_ppoep501rew[84.11756].pth
 
   config:
     device: 'cpu'

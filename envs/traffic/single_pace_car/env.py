@@ -12,11 +12,12 @@ np.set_printoptions(precision=5, linewidth=256, suppress=True)
 
 from envs.traffic.single_pace_car.simulation import PaceCarSim
 from envs.traffic.single_pace_car.viewer import PaceCarEnvViewer
+from PIL import Image
 
 class TrafficSinglePaceCarEnv(DFlexEnv):
 
     def __init__(self, render=False, device='cuda:0', num_envs=64, seed=0, episode_length=1000, no_grad=True, stochastic_init=False, MM_caching_frequency = 1, early_termination = False,
-                num_idm_vehicle=9, num_lane=3, speed_limit=20.0, no_steering=False):
+                num_idm_vehicle=9, num_lane=3, speed_limit=20.0, no_steering=False, render_path=None):
 
         self.num_auto_vehicle = 1
         self.num_idm_vehicle = num_idm_vehicle
@@ -45,6 +46,7 @@ class TrafficSinglePaceCarEnv(DFlexEnv):
         self.early_termination = early_termination
 
         self.viewer = None
+        self.render_path = render_path
 
         self.init_sim()
 
@@ -66,7 +68,7 @@ class TrafficSinglePaceCarEnv(DFlexEnv):
             env = self.sim # self.sim.env_list[0]
 
             if self.viewer is None:
-                config = {'screen_width': 720, 'screen_height': 480, 'offscreen_rendering': False}
+                config = {'screen_width': 720, 'screen_height': 480, 'offscreen_rendering': False, 'render_agent': True}
                 self.viewer = PaceCarEnvViewer(env, config)
 
             self.enable_auto_render = True
@@ -86,10 +88,10 @@ class TrafficSinglePaceCarEnv(DFlexEnv):
             del env.config
             del env.observation_type
 
-            if mode == 'rgb_array':
-            
+            if self.render_path is not None:
                 image = self.viewer.get_image()
-                return image
+                image = Image.fromarray(image)
+                image.save(self.render_path + "/image_{}.png".format(self.num_frames))
     
     def step(self, actions: torch.Tensor):
         with df.ScopedTimer("simulate", active=False, detailed=False):

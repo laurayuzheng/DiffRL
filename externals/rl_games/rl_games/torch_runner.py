@@ -39,7 +39,6 @@ class Runner:
         self.player_factory.register_builder('sac', lambda **kwargs : players.SACPlayer(**kwargs))
         #self.player_factory.register_builder('dqn', lambda **kwargs : players.DQNPlayer(**kwargs))
 
-        
         self.model_builder = model_builder.ModelBuilder()
         self.network_builder = network_builder.NetworkBuilder()
 

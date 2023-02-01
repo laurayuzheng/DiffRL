@@ -646,7 +646,7 @@ class GradA2CAgent(A2CAgent):
         self.critic.load_state_dict(weights['gi_critic'])
         self.target_critic.load_state_dict(weights['gi_target_critic'])
         if self.normalize_input:
-            self.actor.obs_rms = weights['gi_obs_rms'].to(self.ppo_device)
+            self.obs_rms = weights['gi_obs_rms'].to(self.ppo_device)
     
     def calc_gradients(self, input_dict):
 
