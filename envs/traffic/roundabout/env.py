@@ -184,7 +184,7 @@ class TrafficRoundaboutEnv(DFlexEnv):
 
         self.rew_buf = self.rew_buf.detach()
 
-        avg_idm_vehicle_speed = self.sim.vehicle_speed[:, self.num_auto_vehicle:].mean(dim=1)
+        avg_idm_vehicle_speed = self.sim.vehicle_speed[:, self.num_auto_vehicle:].clone().mean(dim=1)
         self.rew_buf = torch.clamp(avg_idm_vehicle_speed / (self.speed_limit * 0.8), max=1.0)
 
         # reset agents

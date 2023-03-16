@@ -375,10 +375,6 @@ class ParallelTrafficSim:
         sel_auto_world_velocity = th.gather(auto_world_velocity, 2, auto_lane_id_A).squeeze(2)
         sel_auto_world_heading = th.gather(auto_world_heading, 2, auto_lane_id_B).squeeze(2)
 
-        # self.vehicle_world_position = self.vehicle_world_position.clone() 
-        # self.vehicle_world_velocity = self.vehicle_world_velocity.clone() 
-        # self.vehicle_world_heading = self.vehicle_world_heading.clone() 
-
         self.vehicle_world_position[env_id, :idm_idx] = sel_auto_world_position[env_id]
         self.vehicle_world_velocity[env_id, :idm_idx] = sel_auto_world_velocity[env_id]
         self.vehicle_world_heading[env_id, :idm_idx] = sel_auto_world_heading[env_id]
