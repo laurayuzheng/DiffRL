@@ -140,7 +140,6 @@ class ParallelTrafficSim:
     def update_info(self):
 
         self.update_idm_world_info()
-
         self.update_next_lane_info()
 
         if not self.no_steering:
@@ -284,10 +283,12 @@ class ParallelTrafficSim:
 
         return
 
-    def update_auto_world_info(self):
+    def update_auto_world_info(self, env_id):
 
         '''
         Update world position, velocity, heading of auto vehicles.
+        This is usually called for non-pacecar envs to compute world positions of vehicles on env reset.
+        See: Roundabout Simulation class: envs.traffic.roundabout.simulation, class RoundaboutSim
         '''
 
         idm_idx = self.idm_vehicle_id(0)
@@ -374,9 +375,13 @@ class ParallelTrafficSim:
         sel_auto_world_velocity = th.gather(auto_world_velocity, 2, auto_lane_id_A).squeeze(2)
         sel_auto_world_heading = th.gather(auto_world_heading, 2, auto_lane_id_B).squeeze(2)
 
-        self.vehicle_world_position[:, :idm_idx] = sel_auto_world_position
-        self.vehicle_world_velocity[:, :idm_idx] = sel_auto_world_velocity
-        self.vehicle_world_heading[:, :idm_idx] = sel_auto_world_heading
+        # self.vehicle_world_position = self.vehicle_world_position.clone() 
+        # self.vehicle_world_velocity = self.vehicle_world_velocity.clone() 
+        # self.vehicle_world_heading = self.vehicle_world_heading.clone() 
+
+        self.vehicle_world_position[env_id, :idm_idx] = sel_auto_world_position[env_id]
+        self.vehicle_world_velocity[env_id, :idm_idx] = sel_auto_world_velocity[env_id]
+        self.vehicle_world_heading[env_id, :idm_idx] = sel_auto_world_heading[env_id]
 
         return
 

@@ -47,6 +47,24 @@ In this paper, we present a GPU-based differentiable simulation and propose a po
   pip install protobuf==3.20.0
   ````
 
+- Install Ray 
+
+Run this if you have an M1 chip ([Source](https://github.com/grpc/grpc/issues/25082))
+````
+export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL=1
+export GRPC_PYTHON_BUILD_SYSTEM_ZLIB=1
+````
+
+Install grpcio
+````
+pip install grpcio
+````
+
+Install Ray 
+````
+pip install ray
+````
+
 #### Test Examples
 
 A test example can be found in the `examples` folder.

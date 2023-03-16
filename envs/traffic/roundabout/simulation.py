@@ -153,7 +153,6 @@ class RoundaboutSim(ParallelTrafficSim):
 
             # idm vehicles only start from border straight lanes;
             idm_starting_lanes = [8, 9, 12, 13, 16, 17, 20, 21]
-            # idm_starting_lanes = [6]
             num_idm_starting_lanes = len(idm_starting_lanes)
 
             num_idm_vehicle_per_lane = []
@@ -171,7 +170,6 @@ class RoundaboutSim(ParallelTrafficSim):
 
             # auto vehicles only start from sine lanes;
             auto_starting_lanes = [10, 14, 18, 22]
-            # auto_starting_lanes = [2]
             num_auto_starting_lanes = len(auto_starting_lanes)
 
             num_auto_vehicle_per_lane = []
@@ -229,5 +227,5 @@ class RoundaboutSim(ParallelTrafficSim):
                     
                     auto_vehicle_id += 1
 
-            self.update_auto_world_info()
+            self.update_auto_world_info(env_id)
             self.update_info()

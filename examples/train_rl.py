@@ -28,6 +28,8 @@ import torch
 
 from utils.common import *
 
+torch.autograd.set_detect_anomaly(True)
+
 device = 'cpu'
 
 def create_dflex_env(**kwargs):

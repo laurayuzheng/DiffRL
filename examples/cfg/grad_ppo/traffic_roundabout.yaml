@@ -4,6 +4,9 @@ params:
     stochastic_env: True
     episode_length: 1000
     MM_caching_frequency: 16
+    num_idm_vehicle: 10 
+    num_auto_vehicle: 1
+    no_steering: False 
 
   algo:
     name: grad_a2c_continuous
@@ -15,6 +18,7 @@ params:
   # load_path: ./examples/logs/ackley/grad_ppo/01-18-2023-11-16-13/nn/df_ackley.pth
 
   config:
+    device: 'cpu'
     name: df_traffic_roundabout_grad_ppo
     env_name: dflex
     multi_gpu: False
