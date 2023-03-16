@@ -3,6 +3,7 @@ from envs.traffic._simulation import ParallelTrafficSim
 from highway_env.road.lane import AbstractLane, LineType
 from highway_env.vehicle.kinematics import Vehicle
 from externals.traffic.road.vehicle.micro_vehicle import MicroVehicle
+from envs.traffic.diff_highway_env.lane import *
 import numpy as np
 import torch as th
 
@@ -137,7 +138,7 @@ class RoundaboutSim(ParallelTrafficSim):
             else:
                 self.add_next_lane(si0_id, 6)
                 self.add_next_lane(4, si1_id)
-                
+
         self.fill_next_lane_tensor()
 
         # create vehicles;
@@ -152,6 +153,7 @@ class RoundaboutSim(ParallelTrafficSim):
 
             # idm vehicles only start from border straight lanes;
             idm_starting_lanes = [8, 9, 12, 13, 16, 17, 20, 21]
+            # idm_starting_lanes = [6]
             num_idm_starting_lanes = len(idm_starting_lanes)
 
             num_idm_vehicle_per_lane = []
@@ -169,6 +171,7 @@ class RoundaboutSim(ParallelTrafficSim):
 
             # auto vehicles only start from sine lanes;
             auto_starting_lanes = [10, 14, 18, 22]
+            # auto_starting_lanes = [2]
             num_auto_starting_lanes = len(auto_starting_lanes)
 
             num_auto_vehicle_per_lane = []
@@ -189,7 +192,7 @@ class RoundaboutSim(ParallelTrafficSim):
                 curr_lane_length = self.lane_length[curr_lane_id].cpu().item()
                 num_idm_vehicle_on_curr_lane = num_idm_vehicle_per_lane[i]
 
-                for j in range(num_idm_vehicle_on_curr_lane):
+                for j in range(0, num_idm_vehicle_on_curr_lane):
                     nv = MicroVehicle.default_micro_vehicle(self.speed_limit)
                     nv.position = j * 2.0 * nv.length
                     
@@ -216,7 +219,7 @@ class RoundaboutSim(ParallelTrafficSim):
                 num_auto_vehicle_on_curr_lane = num_auto_vehicle_per_lane[i]
 
                 for j in range(num_auto_vehicle_on_curr_lane):
-                    longitudinal = 10.0 * j
+                    longitudinal = 8.0 * j + 0.5
 
                     vid = self.auto_vehicle_id(auto_vehicle_id)
                     self.vehicle_position[env_id, vid] = self.tensorize_value(longitudinal)
@@ -226,4 +229,5 @@ class RoundaboutSim(ParallelTrafficSim):
                     
                     auto_vehicle_id += 1
 
+            self.update_auto_world_info()
             self.update_info()

@@ -25,23 +25,28 @@ def set_seed(seed):
     random.seed(seed)
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--env', type = str, default = 'AntEnv')
-parser.add_argument('--num-envs', type = int, default = 64)
-parser.add_argument('--render', default = False, action = 'store_true')
+parser.add_argument('--env', type = str, default = 'TrafficRoundaboutEnv')
+parser.add_argument('--num-envs', type = int, default = 1)
+parser.add_argument('--render', default = True, action = 'store_true')
 
 args = parser.parse_args()
+
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 seeding()
 
 env_fn = getattr(envs, args.env)
 
 env = env_fn(num_envs = args.num_envs, \
-            device = 'cuda:0', \
+            device = device, \
             render = args.render, \
             seed = 0, \
             stochastic_init = True, \
             MM_caching_frequency = 16, \
-            no_grad = True)
+            no_grad = True, \
+            no_steering = False, \
+            num_idm_vehicle = 10, \
+            num_auto_vehicle = 1)
 
 obs = env.reset()
 
@@ -51,7 +56,7 @@ t_start = time.time()
 
 reward_episode = 0.
 for i in range(1000):
-    actions = torch.randn((args.num_envs, num_actions), device = 'cuda:0')
+    actions = torch.randn((args.num_envs, num_actions), device=device)
     obs, reward, done, info = env.step(actions)
     reward_episode += reward
 

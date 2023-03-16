@@ -24,6 +24,7 @@ class ParallelTrafficSim:
         self.speed_limit = speed_limit
         self.no_steering = no_steering
         self.device = device
+        self.pacecar_env = False
 
         self.reset()
 
@@ -139,7 +140,9 @@ class ParallelTrafficSim:
     def update_info(self):
 
         self.update_idm_world_info()
+
         self.update_next_lane_info()
+
         if not self.no_steering:
             self.update_auto_local_info()
 
@@ -281,6 +284,102 @@ class ParallelTrafficSim:
 
         return
 
+    def update_auto_world_info(self):
+
+        '''
+        Update world position, velocity, heading of auto vehicles.
+        '''
+
+        idm_idx = self.idm_vehicle_id(0)
+        num_auto_vehicle = self.num_auto_vehicle
+
+        auto_longitudinal = self.vehicle_position[:, :idm_idx].clone()
+        auto_lateral = th.zeros_like(auto_longitudinal)
+        auto_speed = self.vehicle_speed[:, :idm_idx].clone()
+
+        auto_longitudinal = auto_longitudinal.reshape((-1,))
+        auto_lateral = auto_longitudinal.reshape((-1,))
+        auto_speed = auto_longitudinal.reshape((-1,))
+
+        # straight lane;
+        straight_auto_world_position, straight_auto_world_velocity, straight_auto_world_heading = \
+            straight_lane_position_velocity(auto_longitudinal, 
+                                                auto_lateral, 
+                                                auto_speed, 
+                                                self.straight_lane_start,
+                                                self.straight_lane_end,
+                                                self.straight_lane_heading,
+                                                self.straight_lane_direction,
+                                                self.straight_lane_direction_lateral)
+        
+        # circular lane;
+        circular_auto_world_position, circular_auto_world_velocity, circular_auto_world_heading = \
+            circular_lane_position_velocity(auto_longitudinal, 
+                                                auto_lateral, 
+                                                auto_speed,
+                                                self.circular_lane_center,
+                                                self.circular_lane_radius,
+                                                self.circular_lane_start_phase,
+                                                self.circular_lane_end_phase,
+                                                self.circular_lane_clockwise)
+
+        # sine lane;
+        sine_auto_world_position, sine_auto_world_velocity, sine_auto_world_heading = \
+            sine_lane_position_velocity(auto_longitudinal, 
+                                                auto_lateral, 
+                                                auto_speed,
+                                                self.sine_lane_start,
+                                                self.sine_lane_end,
+                                                self.sine_lane_heading,
+                                                self.sine_lane_direction,
+                                                self.sine_lane_direction_lateral,
+                                                self.sine_lane_amplitude,
+                                                self.sine_lane_pulsation,
+                                                self.sine_lane_phase)
+
+        auto_straight_world_position = straight_auto_world_position.view(self.num_env, num_auto_vehicle, self.num_lane, 2)
+        auto_straight_world_velocity = straight_auto_world_velocity.view(self.num_env, num_auto_vehicle, self.num_lane, 2)
+        auto_straight_world_heading = straight_auto_world_heading.view(self.num_env, num_auto_vehicle, self.num_lane)
+
+        auto_circular_world_position = circular_auto_world_position.view(self.num_env, num_auto_vehicle, self.num_lane, 2)
+        auto_circular_world_velocity = circular_auto_world_velocity.view(self.num_env, num_auto_vehicle, self.num_lane, 2)
+        auto_circular_world_heading = circular_auto_world_heading.view(self.num_env, num_auto_vehicle, self.num_lane)
+
+        auto_sine_world_position = sine_auto_world_position.view(self.num_env, num_auto_vehicle, self.num_lane, 2)
+        auto_sine_world_velocity = sine_auto_world_velocity.view(self.num_env, num_auto_vehicle, self.num_lane, 2)
+        auto_sine_world_heading = sine_auto_world_heading.view(self.num_env, num_auto_vehicle, self.num_lane)
+
+        # collect info;
+        auto_world_position = th.zeros_like(auto_straight_world_position)
+        auto_world_velocity = th.zeros_like(auto_straight_world_velocity)
+        auto_world_heading = th.zeros_like(auto_straight_world_heading)
+
+        auto_world_position[:, :, self.straight_lane_ids] = auto_straight_world_position[:, :, self.straight_lane_ids]
+        auto_world_velocity[:, :, self.straight_lane_ids] = auto_straight_world_velocity[:, :, self.straight_lane_ids]
+        auto_world_heading[:, :, self.straight_lane_ids] = auto_straight_world_heading[:, :, self.straight_lane_ids]
+
+        auto_world_position[:, :, self.circular_lane_ids] = auto_circular_world_position[:, :, self.circular_lane_ids]
+        auto_world_velocity[:, :, self.circular_lane_ids] = auto_circular_world_velocity[:, :, self.circular_lane_ids]
+        auto_world_heading[:, :, self.circular_lane_ids] = auto_circular_world_heading[:, :, self.circular_lane_ids]
+
+        auto_world_position[:, :, self.sine_lane_ids] = auto_sine_world_position[:, :, self.sine_lane_ids]
+        auto_world_velocity[:, :, self.sine_lane_ids] = auto_sine_world_velocity[:, :, self.sine_lane_ids]
+        auto_world_heading[:, :, self.sine_lane_ids] = auto_sine_world_heading[:, :, self.sine_lane_ids]
+
+        auto_lane_id = self.vehicle_lane_id[:, :idm_idx].clone()
+        auto_lane_id_A = auto_lane_id.unsqueeze(-1).unsqueeze(-1).expand((-1, -1, -1, 2)).to(dtype=th.int64)
+        auto_lane_id_B = auto_lane_id.unsqueeze(-1).to(dtype=th.int64)
+        
+        sel_auto_world_position = th.gather(auto_world_position, 2, auto_lane_id_A).squeeze(2)
+        sel_auto_world_velocity = th.gather(auto_world_velocity, 2, auto_lane_id_A).squeeze(2)
+        sel_auto_world_heading = th.gather(auto_world_heading, 2, auto_lane_id_B).squeeze(2)
+
+        self.vehicle_world_position[:, :idm_idx] = sel_auto_world_position
+        self.vehicle_world_velocity[:, :idm_idx] = sel_auto_world_velocity
+        self.vehicle_world_heading[:, :idm_idx] = sel_auto_world_heading
+
+        return
+
     def update_auto_local_info(self):
 
         '''
@@ -345,7 +444,7 @@ class ParallelTrafficSim:
         auto_longitudinal[:, :, self.sine_lane_ids] = auto_sine_longitudinal[:, :, self.sine_lane_ids]
         
         min_auto_distance, min_auto_distance_idx = auto_distance.min(dim=2)
-        
+
         min_auto_distance_idx_A = min_auto_distance_idx.unsqueeze(-1).to(th.int64)
         sel_auto_longitudinal = th.gather(auto_longitudinal, dim=2, index=min_auto_distance_idx_A).squeeze(-1)
         
@@ -356,9 +455,10 @@ class ParallelTrafficSim:
 
         tmp_idx = th.where(min_auto_distance > CLOSE_DIST)
         sel_auto_longitudinal[tmp_idx] = 1000.0
-        # sel_auto_longitudinal = th.where(min_auto_distance < AbstractLane.DEFAULT_WIDTH,
-        #                                     sel_auto_longitudinal,
-        #                                     1000.0) # some very large value so that it affects nothing;
+
+        sel_auto_longitudinal = th.where(min_auto_distance < AbstractLane.DEFAULT_WIDTH,
+                                            sel_auto_longitudinal,
+                                            1000.0) # some very large value so that it affects nothing;
         
         self.vehicle_lane_id[:, :idm_idx] = min_auto_distance_idx
         self.vehicle_position[:, :idm_idx] = sel_auto_longitudinal
@@ -430,6 +530,7 @@ class ParallelTrafficSim:
         vehicle_vel_delta = vehicle_speed - leading_vehicle_speed
 
         expanded_lane_length = self.lane_length.unsqueeze(0).expand((self.num_env, -1))
+
         vehicle_lane_length = th.gather(expanded_lane_length, 1, vehicle_lane_id.to(dtype=th.int64))
         expanded_next_lane_space = next_lane_space.unsqueeze(1).expand((self.num_env, self.num_vehicle, self.num_lane))
         vehicle_next_lane_space = th.gather(expanded_next_lane_space, 2, vehicle_lane_id.unsqueeze(-1).to(dtype=th.int64)).squeeze(-1)

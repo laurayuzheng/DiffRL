@@ -15,15 +15,21 @@ from highway_env.envs.common.graphics import EnvViewer
 
 class TrafficRoundaboutEnv(DFlexEnv):
 
-    def __init__(self, render=False, device='cuda:0', num_envs=64, seed=0, episode_length=500, no_grad=True, stochastic_init=False, MM_caching_frequency = 1, early_termination = False,
+    def __init__(self, render=False, device='cuda:0', num_envs=64, seed=0, 
+                episode_length=500, no_grad=True, stochastic_init=False,
+                MM_caching_frequency = 1, early_termination = False,
                 num_auto_vehicle=1, num_idm_vehicle=10, speed_limit=20.0, no_steering=True):
 
-        assert no_steering, "Roundabout Env does not support steering"
+        # assert no_steering, "Roundabout Env does not support steering"
 
         self.num_auto_vehicle = num_auto_vehicle
         self.num_idm_vehicle = num_idm_vehicle
         self.speed_limit = speed_limit
         self.no_steering = no_steering
+
+        self.steering_bound = np.deg2rad(10.0)
+        if no_steering:
+            self.steering_bound = 0.0
 
         self.acceleration_bound = 8.0
 
@@ -31,7 +37,7 @@ class TrafficRoundaboutEnv(DFlexEnv):
         self.num_obs_per_vehicle = 2 + 2 + 6
 
         # steering, accelerations;
-        self.num_action_per_vehicle = 1
+        self.num_action_per_vehicle = 1 if no_steering else 2
 
         num_obs = (num_idm_vehicle + num_auto_vehicle) * self.num_obs_per_vehicle
         num_act = num_auto_vehicle * self.num_action_per_vehicle
@@ -91,7 +97,8 @@ class TrafficRoundaboutEnv(DFlexEnv):
             actions = actions.view((self.num_envs, self.num_actions))
             
             actions = torch.clip(actions, -1., 1.)
-            actions = actions * self.acceleration_bound
+            actions[:, 0::2] = actions[:, 0::2] * self.steering_bound
+            actions[:, 1::2] = actions[:, 1::2] * self.acceleration_bound
             
             self.actions = actions
             
@@ -184,12 +191,12 @@ class TrafficRoundaboutEnv(DFlexEnv):
         self.reset_buf = torch.where(self.progress_buf > self.episode_length - 1, torch.ones_like(self.reset_buf), self.reset_buf)
 
         # reset collided envs;
-        # collided = self.sim.check_auto_collision()
-        # self.reset_buf[collided] = 1.0
-        # self.rew_buf[collided] = -1.0
+        collided = self.sim.check_auto_collision()
+        self.reset_buf[collided] = 1.0
+        self.rew_buf[collided] = -1.0
 
         # reset out of lane;
-        # if not self.no_steering:
-        #     outoflane = self.sim.check_auto_outoflane()
-        #     self.reset_buf[outoflane] = 1.0
-        #     self.rew_buf[collided] = -1.0
+        if not self.no_steering:
+            outoflane = self.sim.check_auto_outoflane()
+            self.reset_buf[outoflane] = 1.0
+            self.rew_buf[collided] = -1.0

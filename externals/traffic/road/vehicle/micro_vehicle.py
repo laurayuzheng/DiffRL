@@ -1,6 +1,6 @@
 import numpy as np
 
-from road.vehicle.vehicle import Vehicle, DEFAULT_VEHICLE_LENGTH
+from .vehicle import Vehicle, DEFAULT_VEHICLE_LENGTH
 
 class MicroVehicle(Vehicle):
     
