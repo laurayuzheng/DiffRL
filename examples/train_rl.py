@@ -28,7 +28,7 @@ import torch
 
 from utils.common import *
 
-torch.autograd.set_detect_anomaly(True)
+# torch.autograd.set_detect_anomaly(True)
 
 device = 'cpu'
 
