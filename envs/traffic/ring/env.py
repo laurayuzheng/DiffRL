@@ -194,10 +194,17 @@ class TrafficRingEnv(DFlexEnv):
         # self.rew_buf = torch.clamp((avg_idm_vehicle_speed + 0.5 * avg_auto_vehicle_speed) / (self.speed_limit * 0.8), max=1.0)
         # # self.rew_buf = torch.clamp(avg_idm_vehicle_speed / (self.speed_limit * 0.8), max=1.0)
 
+        # Add penalty for emergency braking; this term is negative 
+        emergency_braking_penalty = (self.sim.auto_vehicle_past_headway_thresh * \
+                                    ((self.sim.emergency_braking_accel - self.actions)/(torch.max(self.sim.emergency_braking_accel - self.actions)))) \
+                                    .mean(dim=1)
+        # emergency_braking_penalty = emergency_braking_penalty / self.sim.emergency_braking_accel
+        # emergency_braking_penalty = self.sim.auto_vehicle_past_headway_thresh.clone().mean(dim=1)
+
         # average disparity to desired speed of idm vehicles;
         abs_idm_vehicle_speed_diff = torch.abs(self.sim.vehicle_speed[:, self.num_auto_vehicle:] - self.desired_speed_limit).mean(dim=1) #[0]
         abs_idm_vehicle_speed_diff = torch.clamp(abs_idm_vehicle_speed_diff / self.desired_speed_limit, max=1.0)
-        self.rew_buf = (1.0 - abs_idm_vehicle_speed_diff)
+        self.rew_buf = (1.0 - abs_idm_vehicle_speed_diff) + 0.2*emergency_braking_penalty
 
         # reset agents
         self.reset_buf = torch.where(self.progress_buf > self.episode_length - 1, torch.ones_like(self.reset_buf), self.reset_buf)

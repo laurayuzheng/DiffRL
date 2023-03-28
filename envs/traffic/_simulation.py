@@ -25,6 +25,8 @@ class ParallelTrafficSim:
         self.no_steering = no_steering
         self.device = device
         self.pacecar_env = False
+        self.auto_vehicle_max_headway = 8.
+        self.emergency_braking_accel = -10.
 
         self.reset()
 
@@ -60,6 +62,8 @@ class ParallelTrafficSim:
         self.vehicle_world_heading = th.zeros((self.num_env, self.num_vehicle,), dtype=th.float32, device=self.device)
         
         self.vehicle_pairwise_distance = th.zeros((self.num_env, self.num_vehicle, self.num_vehicle), dtype=th.float32, device=self.device)
+
+        self.auto_vehicle_past_headway_thresh = th.zeros((self.num_env, self.num_auto_vehicle), dtype=th.float32, device=self.device)
 
         # straight lane info;
         self.straight_lane_start = th.zeros((self.num_lane, 2), dtype=th.float32, device=self.device)
@@ -544,6 +548,8 @@ class ParallelTrafficSim:
         self.vehicle_pos_delta[tmp_idx] = vehicle_max_pos_delta[tmp_idx]
         self.vehicle_pos_delta = th.clip(self.vehicle_pos_delta, min=1e-3)
         self.vehicle_speed_delta[tmp_idx] = 0.
+
+        self.auto_vehicle_past_headway_thresh = th.where(self.vehicle_pos_delta[:, :self.num_auto_vehicle] < self.auto_vehicle_max_headway, 1, 0)
         
     def update_idm_vehicle_lane_membership(self):
 
@@ -570,6 +576,10 @@ class ParallelTrafficSim:
         if self.no_steering:
 
             accelerations = actions # (num env, num vehicle)
+            assert accelerations.shape == self.auto_vehicle_past_headway_thresh.shape 
+            
+            # Emergency braking for auto vehicles past the maximum headway
+            accelerations = th.where(self.auto_vehicle_past_headway_thresh > 0, self.emergency_braking_accel, accelerations)
 
             curr_auto_position = self.vehicle_position[:, :self.num_auto_vehicle].clone()
             curr_auto_speed = self.vehicle_speed[:, :self.num_auto_vehicle].clone()
