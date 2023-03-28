@@ -7,7 +7,7 @@ from envs.traffic.diff_highway_env.lane import *
 import numpy as np
 import torch as th
 
-class RoundaboutSim(ParallelTrafficSim):
+class MergeSim(ParallelTrafficSim):
 
     def __init__(self, num_env: int, num_auto_vehicle: int, num_idm_vehicle: int, num_lane: int, speed_limit: float, no_steering: bool, device):
 

@@ -44,7 +44,7 @@ env = env_fn(num_envs = args.num_envs, \
             stochastic_init = True, \
             MM_caching_frequency = 16, \
             no_grad = True, \
-            no_steering = False, \
+            no_steering = True, \
             num_idm_vehicle = 10, \
             num_auto_vehicle = 1)
 
@@ -56,7 +56,8 @@ t_start = time.time()
 
 reward_episode = 0.
 for i in range(1000):
-    actions = torch.randn((args.num_envs, num_actions), device=device)
+    # actions = torch.randn((args.num_envs, num_actions), device=device)
+    actions = torch.Tensor([1]).expand(args.num_envs, -1)
     obs, reward, done, info = env.step(actions)
     reward_episode += reward
 

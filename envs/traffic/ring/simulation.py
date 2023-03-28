@@ -7,11 +7,11 @@ from envs.traffic.diff_highway_env.lane import *
 import numpy as np
 import torch as th
 
-class RoundaboutSim(ParallelTrafficSim):
+class RingSim(ParallelTrafficSim):
 
     def __init__(self, num_env: int, num_auto_vehicle: int, num_idm_vehicle: int, num_lane: int, speed_limit: float, no_steering: bool, device):
 
-        num_lane = 8 + 4 * 4
+        num_lane = 8
 
         super().__init__(num_env, num_auto_vehicle, num_idm_vehicle, num_lane, speed_limit, no_steering, device)
 
@@ -62,83 +62,6 @@ class RoundaboutSim(ParallelTrafficSim):
             self.add_next_lane(curr_num_lane, (curr_num_lane + 1) % 8)
             curr_num_lane += 1
 
-        
-        # add access lanes (straight, sine);
-
-        for direction in ["south", "east", "north", "west"]:
-
-            access = 170.
-            dev = 85.
-            a = 5.
-            delta_st = 0.2 * dev
-
-            delta_en = dev - delta_st
-            w = 2. * np.pi / dev
-
-            if direction == 'south':
-                st_s0, st_e0, st_lt0 = [2., dev], [2., dev / 2], [LineType.STRIPED, LineType.CONTINUOUS]
-                st_s1, st_e1, st_lt1 = [-2., dev / 2], [-2., dev], [LineType.NONE, LineType.CONTINUOUS]
-                
-                si_s0, si_e0, si_lt0 = [2. + a, dev / 2], [2. + a, dev / 2 - delta_st], [LineType.CONTINUOUS, LineType.CONTINUOUS]
-                si_am0, si_pu0, si_ph0 = a, w, -np.pi / 2
-
-                si_s1, si_e1, si_lt1 = [-2. - a, -dev / 2 + delta_en], [-2. - a, dev / 2], [LineType.CONTINUOUS, LineType.CONTINUOUS]
-                si_am1, si_pu1, si_ph1 = a, w, -np.pi / 2 + w * delta_en
-            elif direction == 'east':
-                st_s0, st_e0, st_lt0 = [dev, -2.], [dev / 2, -2.], [LineType.STRIPED, LineType.CONTINUOUS]
-                st_s1, st_e1, st_lt1 = [dev / 2., 2.], [dev, 2.], [LineType.NONE, LineType.CONTINUOUS]
-                
-                si_s0, si_e0, si_lt0 = [dev / 2, -2. - a], [dev / 2 - delta_st, -2. - a], [LineType.CONTINUOUS, LineType.CONTINUOUS]
-                si_am0, si_pu0, si_ph0 = a, w, -np.pi / 2
-
-                si_s1, si_e1, si_lt1 = [-dev / 2. + delta_en, 2. + a], [dev / 2, 2. + a], [LineType.CONTINUOUS, LineType.CONTINUOUS]
-                si_am1, si_pu1, si_ph1 = a, w, -np.pi / 2 + w * delta_en
-
-            elif direction == "north":
-                st_s0, st_e0, st_lt0 = [-2., -dev], [-2., -dev / 2], [LineType.STRIPED, LineType.CONTINUOUS]
-                st_s1, st_e1, st_lt1 = [2., -dev / 2.], [2., -dev], [LineType.NONE, LineType.CONTINUOUS]
-                
-                si_s0, si_e0, si_lt0 = [-2. - a, -dev / 2], [-2. - a, -dev / 2 + delta_st], [LineType.CONTINUOUS, LineType.CONTINUOUS]
-                si_am0, si_pu0, si_ph0 = a, w, -np.pi / 2
-
-                si_s1, si_e1, si_lt1 = [2. + a, dev / 2 - delta_en], [2. + a, -dev / 2], [LineType.CONTINUOUS, LineType.CONTINUOUS]
-                si_am1, si_pu1, si_ph1 = a, w, -np.pi / 2 + w * delta_en
-
-            else:
-                st_s0, st_e0, st_lt0 = [-dev, 2.], [-dev / 2, 2.], [LineType.STRIPED, LineType.CONTINUOUS]
-                st_s1, st_e1, st_lt1 = [-dev / 2, -2.], [-dev, -2.], [LineType.NONE, LineType.CONTINUOUS]
-                
-                si_s0, si_e0, si_lt0 = [-dev / 2, 2. + a], [-dev / 2 + delta_st, 2 + a], [LineType.CONTINUOUS, LineType.CONTINUOUS]
-                si_am0, si_pu0, si_ph0 = a, w, -np.pi / 2
-
-                si_s1, si_e1, si_lt1 = [dev / 2 - delta_en, -2 - a], [-dev / 2, -2 - a], [LineType.CONTINUOUS, LineType.CONTINUOUS]
-                si_am1, si_pu1, si_ph1 = a, w, -np.pi / 2 + w * delta_en
-
-            st0_id = self.make_straight_lane(curr_num_lane, st_s0, st_e0, "s00", "s01", st_lt0)
-            curr_num_lane += 1
-            st1_id = self.make_straight_lane(curr_num_lane, st_s1, st_e1, "s00", "s01", st_lt1)
-            curr_num_lane += 1
-            si0_id = self.make_sine_lane(curr_num_lane, si_s0, si_e0, si_am0, si_pu0, si_ph0, "s00", "s01", si_lt0)
-            curr_num_lane += 1
-            si1_id = self.make_sine_lane(curr_num_lane, si_s1, si_e1, si_am1, si_pu1, si_ph1, "s00", "s01", si_lt1)
-            curr_num_lane += 1
-
-            self.add_next_lane(st0_id, si0_id)
-            self.add_next_lane(si1_id, st1_id)
-            self.add_next_lane(st1_id, st0_id)
-            if direction == 'south':
-                self.add_next_lane(si0_id, 0)
-                self.add_next_lane(6, si1_id)
-            elif direction == 'east':
-                self.add_next_lane(si0_id, 2)
-                self.add_next_lane(0, si1_id)
-            elif direction == 'north':
-                self.add_next_lane(si0_id, 4)
-                self.add_next_lane(2, si1_id)
-            else:
-                self.add_next_lane(si0_id, 6)
-                self.add_next_lane(4, si1_id)
-
         self.fill_next_lane_tensor()
 
         # create vehicles;
@@ -152,7 +75,7 @@ class RoundaboutSim(ParallelTrafficSim):
             # allocate idm vehicles;
 
             # idm vehicles only start from border straight lanes;
-            idm_starting_lanes = [8, 9, 12, 13, 16, 17, 20, 21]
+            idm_starting_lanes = list(range(7))
             num_idm_starting_lanes = len(idm_starting_lanes)
 
             num_idm_vehicle_per_lane = []
@@ -169,7 +92,7 @@ class RoundaboutSim(ParallelTrafficSim):
             # allocate auto vehicles;
 
             # auto vehicles only start from sine lanes;
-            auto_starting_lanes = [10, 14, 18, 22]
+            auto_starting_lanes = [7]
             num_auto_starting_lanes = len(auto_starting_lanes)
 
             num_auto_vehicle_per_lane = []

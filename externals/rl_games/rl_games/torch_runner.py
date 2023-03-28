@@ -39,6 +39,10 @@ class Runner:
         self.player_factory.register_builder('sac', lambda **kwargs : players.SACPlayer(**kwargs))
         #self.player_factory.register_builder('dqn', lambda **kwargs : players.DQNPlayer(**kwargs))
 
+        # grad rl; 
+        self.player_factory.register_builder('grad_a2c_continuous', lambda **kwargs : players.PpoPlayerContinuous(**kwargs))
+        self.player_factory.register_builder('grad_a2c_continuous_backup', lambda **kwargs : players.PpoPlayerContinuous(**kwargs))
+
         self.model_builder = model_builder.ModelBuilder()
         self.network_builder = network_builder.NetworkBuilder()
 

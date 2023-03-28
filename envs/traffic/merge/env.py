@@ -10,10 +10,10 @@ import dflex as df
 import numpy as np
 np.set_printoptions(precision=5, linewidth=256, suppress=True)
 
-from envs.traffic.roundabout.simulation import RoundaboutSim
+from envs.traffic.merge.simulation import MergeSim
 from highway_env.envs.common.graphics import EnvViewer
 
-class TrafficRoundaboutEnv(DFlexEnv):
+class TrafficMergeEnv(DFlexEnv):
 
     def __init__(self, render=False, device='cuda:0', num_envs=64, seed=0, 
                 episode_length=500, no_grad=True, stochastic_init=False,
@@ -33,7 +33,7 @@ class TrafficRoundaboutEnv(DFlexEnv):
         if no_steering:
             self.steering_bound = 0.0
 
-        self.acceleration_bound = 2.0
+        self.acceleration_bound = 8.0
 
         # pos, vel, idm properties;
         self.num_obs_per_vehicle = 2 + 2 + 6
@@ -44,7 +44,7 @@ class TrafficRoundaboutEnv(DFlexEnv):
         num_obs = (num_idm_vehicle + num_auto_vehicle) * self.num_obs_per_vehicle
         num_act = num_auto_vehicle * self.num_action_per_vehicle
 
-        super(TrafficRoundaboutEnv, self).__init__(num_envs, num_obs, num_act, episode_length, MM_caching_frequency, seed, no_grad, render, device)
+        super(TrafficMergeEnv, self).__init__(num_envs, num_obs, num_act, episode_length, MM_caching_frequency, seed, no_grad, render, device)
 
         self.stochastic_init = stochastic_init
         self.early_termination = early_termination
@@ -56,7 +56,7 @@ class TrafficRoundaboutEnv(DFlexEnv):
     def init_sim(self):
         
         self.dt = 0.03
-        self.sim = RoundaboutSim(self.num_envs, 
+        self.sim = MergeSim(self.num_envs, 
                                 self.num_auto_vehicle, 
                                 self.num_idm_vehicle, 
                                 -1,

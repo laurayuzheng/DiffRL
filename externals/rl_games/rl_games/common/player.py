@@ -194,6 +194,7 @@ class BasePlayer(object):
                         obses, masks, is_determenistic)
                 else:
                     action = self.get_action(obses, is_determenistic)
+
                 obses, r, done, info = self.env_step(self.env, action)
                 cr += r
                 steps += 1

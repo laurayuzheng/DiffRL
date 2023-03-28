@@ -143,7 +143,7 @@ def get_args(): # TODO: delve into the arguments
             "help": "Run trained policy, the same as test"},
         {"name": "--checkpoint", "type": str, "default": "Base",
             "help": "Path to the saved weights, only for rl_games RL library"},
-        {"name": "--rl_device", "type": str, "default": "cuda:0",
+        {"name": "--rl_device", "type": str, "default": "cpu",
             "help": "Choose CPU or GPU device for inferencing policy network"},
         {"name": "--seed", "type": int, "default": 0, "help": "Random seed"},
         {"name": "--render", "action": "store_true", "default": False,
@@ -161,7 +161,6 @@ def get_args(): # TODO: delve into the arguments
         custom_parameters=custom_parameters)
     
     return args
-
 
 
 if __name__ == '__main__':

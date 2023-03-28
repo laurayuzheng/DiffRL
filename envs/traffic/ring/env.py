@@ -10,10 +10,10 @@ import dflex as df
 import numpy as np
 np.set_printoptions(precision=5, linewidth=256, suppress=True)
 
-from envs.traffic.roundabout.simulation import RoundaboutSim
+from envs.traffic.ring.simulation import RingSim
 from highway_env.envs.common.graphics import EnvViewer
 
-class TrafficRoundaboutEnv(DFlexEnv):
+class TrafficRingEnv(DFlexEnv):
 
     def __init__(self, render=False, device='cuda:0', num_envs=64, seed=0, 
                 episode_length=500, no_grad=True, stochastic_init=False,
@@ -21,19 +21,19 @@ class TrafficRoundaboutEnv(DFlexEnv):
                 num_auto_vehicle=1, num_idm_vehicle=10, speed_limit=20.0, 
                 no_steering=True):
 
-        # assert no_steering, "Roundabout Env does not support steering"
-
         self.num_auto_vehicle = num_auto_vehicle
         self.num_idm_vehicle = num_idm_vehicle
         self.speed_limit = speed_limit
         self.no_steering = no_steering
+
+        self.desired_speed_limit = speed_limit
 
         self.steering_bound = np.deg2rad(10.0)
 
         if no_steering:
             self.steering_bound = 0.0
 
-        self.acceleration_bound = 2.0
+        self.acceleration_bound = 1.5
 
         # pos, vel, idm properties;
         self.num_obs_per_vehicle = 2 + 2 + 6
@@ -44,7 +44,7 @@ class TrafficRoundaboutEnv(DFlexEnv):
         num_obs = (num_idm_vehicle + num_auto_vehicle) * self.num_obs_per_vehicle
         num_act = num_auto_vehicle * self.num_action_per_vehicle
 
-        super(TrafficRoundaboutEnv, self).__init__(num_envs, num_obs, num_act, episode_length, MM_caching_frequency, seed, no_grad, render, device)
+        super(TrafficRingEnv, self).__init__(num_envs, num_obs, num_act, episode_length, MM_caching_frequency, seed, no_grad, render, device)
 
         self.stochastic_init = stochastic_init
         self.early_termination = early_termination
@@ -56,7 +56,7 @@ class TrafficRoundaboutEnv(DFlexEnv):
     def init_sim(self):
         
         self.dt = 0.03
-        self.sim = RoundaboutSim(self.num_envs, 
+        self.sim = RingSim(self.num_envs, 
                                 self.num_auto_vehicle, 
                                 self.num_idm_vehicle, 
                                 -1,
@@ -97,7 +97,6 @@ class TrafficRoundaboutEnv(DFlexEnv):
     def step(self, actions: torch.Tensor):
         with df.ScopedTimer("simulate", active=False, detailed=False):
             actions = actions.view((self.num_envs, self.num_actions))
-            
             actions = torch.clip(actions, -1., 1.)
 
             if self.no_steering:
@@ -190,10 +189,15 @@ class TrafficRoundaboutEnv(DFlexEnv):
 
         self.rew_buf = self.rew_buf.detach()
 
-        avg_idm_vehicle_speed = self.sim.vehicle_speed[:, self.num_auto_vehicle:].clone().mean(dim=1)
-        avg_auto_vehicle_speed = self.sim.vehicle_speed[:, :self.num_auto_vehicle].clone().mean(dim=1)
-        self.rew_buf = torch.clamp((avg_idm_vehicle_speed + 0.5 * avg_auto_vehicle_speed) / (self.speed_limit * 0.8), max=1.0)
-        # self.rew_buf = torch.clamp(avg_idm_vehicle_speed / (self.speed_limit * 0.8), max=1.0)
+        # avg_idm_vehicle_speed = self.sim.vehicle_speed[:, self.num_auto_vehicle:].clone().mean(dim=1)
+        # avg_auto_vehicle_speed = self.sim.vehicle_speed[:, :self.num_auto_vehicle].clone().mean(dim=1)
+        # self.rew_buf = torch.clamp((avg_idm_vehicle_speed + 0.5 * avg_auto_vehicle_speed) / (self.speed_limit * 0.8), max=1.0)
+        # # self.rew_buf = torch.clamp(avg_idm_vehicle_speed / (self.speed_limit * 0.8), max=1.0)
+
+        # average disparity to desired speed of idm vehicles;
+        abs_idm_vehicle_speed_diff = torch.abs(self.sim.vehicle_speed[:, self.num_auto_vehicle:] - self.desired_speed_limit).mean(dim=1) #[0]
+        abs_idm_vehicle_speed_diff = torch.clamp(abs_idm_vehicle_speed_diff / self.desired_speed_limit, max=1.0)
+        self.rew_buf = (1.0 - abs_idm_vehicle_speed_diff)
 
         # reset agents
         self.reset_buf = torch.where(self.progress_buf > self.episode_length - 1, torch.ones_like(self.reset_buf), self.reset_buf)

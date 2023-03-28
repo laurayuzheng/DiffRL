@@ -92,6 +92,7 @@ params:
     
     player:
       # render: True
+      device_name: 'cpu'
       determenistic: True
       games_num: 12
       num_actors: 4
