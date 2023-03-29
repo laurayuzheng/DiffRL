@@ -72,83 +72,91 @@ class RingSim(ParallelTrafficSim):
         super().reset_env(env_id)
 
         with th.no_grad():
-            # allocate idm vehicles;
-
-            # idm vehicles only start from border straight lanes;
-            idm_starting_lanes = list(range(7))
-            num_idm_starting_lanes = len(idm_starting_lanes)
-
-            num_idm_vehicle_per_lane = []
-            for i in range(num_idm_starting_lanes):
-                num_idm_vehicle_per_lane.append(self.num_idm_vehicle // num_idm_starting_lanes)
-
-            num_remain_idm_vehicle = self.num_idm_vehicle - (self.num_idm_vehicle // num_idm_starting_lanes) * num_idm_starting_lanes
-            for i in range(num_idm_starting_lanes):
-                if num_remain_idm_vehicle == 0:
-                    break
-                num_idm_vehicle_per_lane[i] += 1
-                num_remain_idm_vehicle -= 1
-
-            # allocate auto vehicles;
-
-            # auto vehicles only start from sine lanes;
-            auto_starting_lanes = [7]
-            num_auto_starting_lanes = len(auto_starting_lanes)
-
-            num_auto_vehicle_per_lane = []
-            for i in range(num_auto_starting_lanes):
-                num_auto_vehicle_per_lane.append(self.num_auto_vehicle // num_auto_starting_lanes)
-
-            num_remain_auto_vehicle = self.num_auto_vehicle - (self.num_auto_vehicle // num_auto_starting_lanes) * num_auto_starting_lanes
-            for i in range(num_auto_starting_lanes):
-                if num_remain_auto_vehicle == 0:
-                    break
-                num_auto_vehicle_per_lane[i] += 1
-                num_remain_auto_vehicle -= 1
-
-            # make idm vehicles;
-            idm_vehicle_id = 0
-            for i in range(num_idm_starting_lanes):
-                curr_lane_id = idm_starting_lanes[i]
-                curr_lane_length = self.lane_length[curr_lane_id].cpu().item()
-                num_idm_vehicle_on_curr_lane = num_idm_vehicle_per_lane[i]
-
-                for j in range(0, num_idm_vehicle_on_curr_lane):
-                    nv = MicroVehicle.default_micro_vehicle(self.speed_limit)
-                    nv.position = j * 2.0 * nv.length
+            
+            for eid in env_id:
                     
-                    assert nv.position < curr_lane_length, "Please reduce number of IDM vehicles, lane overflow!"
-                    
-                    vid = self.idm_vehicle_id(idm_vehicle_id)
-                    self.vehicle_position[env_id, vid] = self.tensorize_value(nv.position)
-                    self.vehicle_speed[env_id, vid] = self.tensorize_value(nv.speed)
-                    self.vehicle_accel_max[env_id, vid] = self.tensorize_value(nv.accel_max)
-                    self.vehicle_accel_pref[env_id, vid] = self.tensorize_value(nv.accel_pref)
-                    self.vehicle_target_speed[env_id, vid] = self.tensorize_value(nv.target_speed)
-                    self.vehicle_min_space[env_id, vid] = self.tensorize_value(nv.min_space)
-                    self.vehicle_time_pref[env_id, vid] = self.tensorize_value(nv.time_pref)
-                    self.vehicle_lane_id[env_id, vid] = self.tensorize_value(curr_lane_id, dtype=th.int32)
-                    self.vehicle_length[env_id, vid] = self.tensorize_value(nv.length)
+                # @sanghyun: select starting lane of auto vehicle randomly;
+                # this is needed to accelerate (generalized) training;
+                auto_starting_lanes = [th.randint(0, 7, [1]).cpu().item()]
 
-                    idm_vehicle_id += 1
+                # idm vehicles only start from border straight lanes;
+                idm_starting_lanes = list(range(8))
+                idm_starting_lanes.remove(auto_starting_lanes[0])
+                num_idm_starting_lanes = len(idm_starting_lanes)
 
-            # make auto vehicles;
-            auto_vehicle_id = 0
-            for i in range(num_auto_starting_lanes):
-                curr_lane_id = auto_starting_lanes[i]
-                curr_lane_length = self.lane_length[curr_lane_id].cpu().item()
-                num_auto_vehicle_on_curr_lane = num_auto_vehicle_per_lane[i]
+                num_idm_vehicle_per_lane = []
+                for i in range(num_idm_starting_lanes):
+                    num_idm_vehicle_per_lane.append(self.num_idm_vehicle // num_idm_starting_lanes)
 
-                for j in range(num_auto_vehicle_on_curr_lane):
-                    longitudinal = 10.0 * j
+                num_remain_idm_vehicle = self.num_idm_vehicle - (self.num_idm_vehicle // num_idm_starting_lanes) * num_idm_starting_lanes
+                
+                # @sanghyun: also select idm lanes randomly;
+                for i in th.randperm(num_idm_starting_lanes).cpu():
+                    if num_remain_idm_vehicle == 0:
+                        break
+                    num_idm_vehicle_per_lane[i] += 1
+                    num_remain_idm_vehicle -= 1
 
-                    vid = self.auto_vehicle_id(auto_vehicle_id)
-                    self.vehicle_position[env_id, vid] = self.tensorize_value(longitudinal)
-                    self.vehicle_speed[env_id, vid] = self.tensorize_value(0.)
-                    self.vehicle_lane_id[env_id, vid] = self.tensorize_value(curr_lane_id, dtype=th.int32)
-                    self.vehicle_length[env_id, vid] = self.tensorize_value(Vehicle.LENGTH)
-                    
-                    auto_vehicle_id += 1
+                # allocate auto vehicles;
+
+                # auto vehicles only start from sine lanes;
+                # auto_starting_lanes = [7]
+                num_auto_starting_lanes = len(auto_starting_lanes)
+
+                num_auto_vehicle_per_lane = []
+                for i in range(num_auto_starting_lanes):
+                    num_auto_vehicle_per_lane.append(self.num_auto_vehicle // num_auto_starting_lanes)
+
+                num_remain_auto_vehicle = self.num_auto_vehicle - (self.num_auto_vehicle // num_auto_starting_lanes) * num_auto_starting_lanes
+                for i in range(num_auto_starting_lanes):
+                    if num_remain_auto_vehicle == 0:
+                        break
+                    num_auto_vehicle_per_lane[i] += 1
+                    num_remain_auto_vehicle -= 1
+
+                # make idm vehicles;
+                idm_vehicle_id = 0
+                for i in range(num_idm_starting_lanes):
+                    curr_lane_id = idm_starting_lanes[i]
+                    curr_lane_length = self.lane_length[curr_lane_id].cpu().item()
+                    num_idm_vehicle_on_curr_lane = num_idm_vehicle_per_lane[i]
+
+                    for j in range(0, num_idm_vehicle_on_curr_lane):
+                        nv = MicroVehicle.default_micro_vehicle(self.speed_limit)
+                        nv.position = j * 2.0 * nv.length
+                        
+                        assert nv.position < curr_lane_length, "Please reduce number of IDM vehicles, lane overflow!"
+                        
+                        vid = self.idm_vehicle_id(idm_vehicle_id)
+                        self.vehicle_position[eid, vid] = self.tensorize_value(nv.position)
+                        self.vehicle_speed[eid, vid] = self.tensorize_value(nv.speed)
+                        self.vehicle_accel_max[eid, vid] = self.tensorize_value(nv.accel_max)
+                        self.vehicle_accel_pref[eid, vid] = self.tensorize_value(nv.accel_pref)
+                        self.vehicle_target_speed[eid, vid] = self.tensorize_value(nv.target_speed)
+                        self.vehicle_min_space[eid, vid] = self.tensorize_value(nv.min_space)
+                        self.vehicle_time_pref[eid, vid] = self.tensorize_value(nv.time_pref)
+                        self.vehicle_lane_id[eid, vid] = self.tensorize_value(curr_lane_id, dtype=th.int32)
+                        self.vehicle_length[eid, vid] = self.tensorize_value(nv.length)
+
+                        idm_vehicle_id += 1
+
+                # make auto vehicles;
+                auto_vehicle_id = 0
+                for i in range(num_auto_starting_lanes):
+                    curr_lane_id = auto_starting_lanes[i]
+                    curr_lane_length = self.lane_length[curr_lane_id].cpu().item()
+                    num_auto_vehicle_on_curr_lane = num_auto_vehicle_per_lane[i]
+
+                    for j in range(num_auto_vehicle_on_curr_lane):
+                        longitudinal = 10.0 * j
+
+                        vid = self.auto_vehicle_id(auto_vehicle_id)
+                        self.vehicle_position[eid, vid] = self.tensorize_value(longitudinal)
+                        self.vehicle_speed[eid, vid] = self.tensorize_value(0.)
+                        self.vehicle_lane_id[eid, vid] = self.tensorize_value(curr_lane_id, dtype=th.int32)
+                        self.vehicle_length[eid, vid] = self.tensorize_value(Vehicle.LENGTH)
+                        
+                        auto_vehicle_id += 1
 
             if not self.no_steering:
                 self.update_auto_world_info(env_id)
