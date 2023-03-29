@@ -33,10 +33,10 @@ class TrafficRingEnv(DFlexEnv):
         if no_steering:
             self.steering_bound = 0.0
 
-        self.acceleration_bound = 1.5
+        self.acceleration_bound = 5.0
 
         # pos, vel, idm properties;
-        self.num_obs_per_vehicle = 2 + 2 + 6
+        self.num_obs_per_vehicle = 2 + 2 # + 6
 
         # steering, accelerations;
         self.num_action_per_vehicle = 1 if no_steering else 2
@@ -173,15 +173,8 @@ class TrafficRingEnv(DFlexEnv):
         position_y = self.sim.vehicle_world_position[:, :, 1]
         velocity_x = self.sim.vehicle_world_velocity[:, :, 0]
         velocity_y = self.sim.vehicle_world_velocity[:, :, 1]
-        accel_max = self.sim.vehicle_accel_max[:, :]
-        accel_pref = self.sim.vehicle_accel_pref[:, :]
-        target_speed = self.sim.vehicle_target_speed[:, :]
-        min_space = self.sim.vehicle_min_space[:, :]
-        time_pref = self.sim.vehicle_time_pref[:, :]
-        vehicle_length = self.sim.vehicle_length[:, :]
 
-        self.obs_buf = torch.cat([position_x, position_y, velocity_x, velocity_y, accel_max,
-                                    accel_pref, target_speed, min_space, time_pref, vehicle_length], dim=1)
+        self.obs_buf = torch.cat([position_x, position_y, velocity_x, velocity_y], dim=1)
 
         return
 
