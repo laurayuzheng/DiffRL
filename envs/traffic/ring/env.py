@@ -33,7 +33,7 @@ class TrafficRingEnv(DFlexEnv):
         if no_steering:
             self.steering_bound = 0.0
 
-        self.acceleration_bound = 1.5
+        self.acceleration_bound = 3. # From FLOW 
 
         # pos, vel, idm properties;
         self.num_obs_per_vehicle = 2 + 2 + 6
@@ -195,9 +195,11 @@ class TrafficRingEnv(DFlexEnv):
         # # self.rew_buf = torch.clamp(avg_idm_vehicle_speed / (self.speed_limit * 0.8), max=1.0)
 
         # Add penalty for emergency braking; this term is negative 
+        # Penalty is less severe if the vehicle is already braking 
         emergency_braking_penalty = (self.sim.auto_vehicle_past_headway_thresh * \
                                     ((self.sim.emergency_braking_accel - self.actions)/(torch.max(self.sim.emergency_braking_accel - self.actions)))) \
-                                    .mean(dim=1)
+                                    .mean(dim=1) 
+
         # emergency_braking_penalty = emergency_braking_penalty / self.sim.emergency_braking_accel
         # emergency_braking_penalty = self.sim.auto_vehicle_past_headway_thresh.clone().mean(dim=1)
 
