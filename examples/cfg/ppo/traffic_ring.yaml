@@ -2,7 +2,7 @@ params:
   diff_env:
     name: TrafficRingEnv
     stochastic_env: True
-    episode_length: 1000
+    episode_length: 3000
     MM_caching_frequency: 16
 
   algo:
@@ -52,10 +52,10 @@ params:
     normalize_advantage: True
     gamma: 0.99
     tau: 0.95
-    learning_rate: 5e-4 #3e-4
+    learning_rate: 1e-4 #3e-4
     lr_schedule: adaptive #adaptive
-    lr_threshold: 0.008
-    kl_threshold: 0.008
+    lr_threshold: 0.002
+    kl_threshold: 0.002
     score_to_win: 20000
     max_epochs: 5000
     save_best_after: 50

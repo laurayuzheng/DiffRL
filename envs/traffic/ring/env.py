@@ -1,3 +1,7 @@
+''' Ring environment. Environment parameters are based off Wave Attenuation Ring Environment from FLOW. 
+
+'''
+
 from envs.dflex_env import DFlexEnv
 import torch
 
@@ -11,7 +15,11 @@ import numpy as np
 np.set_printoptions(precision=5, linewidth=256, suppress=True)
 
 from envs.traffic.ring.simulation import RingSim
+from envs.traffic._idm import IDM_DELTA
 from highway_env.envs.common.graphics import EnvViewer
+
+from externals.traffic.road.vehicle.micro_vehicle import MicroVehicle
+from scipy.optimize import fsolve
 
 class TrafficRingEnv(DFlexEnv):
 
@@ -33,7 +41,7 @@ class TrafficRingEnv(DFlexEnv):
         if no_steering:
             self.steering_bound = 0.0
 
-        self.acceleration_bound = 3. # From FLOW 
+        self.acceleration_bound = 1. # From FLOW 
 
         # pos, vel, idm properties;
         self.num_obs_per_vehicle = 2 + 2 # + 6
@@ -63,6 +71,16 @@ class TrafficRingEnv(DFlexEnv):
                                 self.speed_limit,
                                 self.no_steering,
                                 self.device)
+        
+        # solve for the velocity upper bound of the ring
+        v_eq_max = fsolve(self.v_eq_max_function, self.num_idm_vehicle+self.num_auto_vehicle)[0]
+        
+        print('velocity upper bound:', v_eq_max)
+        print('maximum reward possible in 1 episode: ', 
+              4 * v_eq_max / self.sim.speed_limit \
+                * self.episode_length \
+                * (self.num_auto_vehicle + self.num_idm_vehicle))
+
         
     def render(self, mode = 'human'):
         # render only first env;
@@ -180,37 +198,82 @@ class TrafficRingEnv(DFlexEnv):
 
     def calculateReward(self):
 
+        self.calculateRewardWaveAttenuation()
+
+    # def calculateReward(self):
+
+    #     self.rew_buf = self.rew_buf.detach()
+
+    #     # Add penalty for emergency braking; this term is negative 
+    #     # Penalty is less severe if the vehicle is already braking 
+    #     emergency_braking_penalty = (self.sim.auto_vehicle_past_headway_thresh * \
+    #                                 ((self.sim.emergency_braking_accel - self.actions)/(torch.max(self.sim.emergency_braking_accel - self.actions)))) \
+    #                                 .mean(dim=1) 
+
+    #     # average disparity to desired speed of idm vehicles;
+    #     abs_idm_vehicle_speed_diff = torch.abs(self.sim.vehicle_speed[:, self.num_auto_vehicle:] - self.desired_speed_limit).mean(dim=1) #[0]
+    #     abs_idm_vehicle_speed_diff = torch.clamp(abs_idm_vehicle_speed_diff / self.desired_speed_limit, max=1.0)
+    #     self.rew_buf = (1.0 - abs_idm_vehicle_speed_diff) + 0.2*emergency_braking_penalty
+
+    #     # reset agents
+    #     self.reset_buf = torch.where(self.progress_buf > self.episode_length - 1, torch.ones_like(self.reset_buf), self.reset_buf)
+
+    #     # reset collided envs;
+    #     collided = self.sim.check_auto_collision()
+    #     self.reset_buf[collided] = 1.0
+    #     self.rew_buf[collided] = -1.0
+
+    #     # reset out of lane;
+    #     if not self.no_steering:
+    #         outoflane = self.sim.check_auto_outoflane()
+    #         self.reset_buf[outoflane] = 1.0
+    #         self.rew_buf[collided] = -1.0
+
+    def v_eq_max_function(self, num_vehicles, v=4):
+        """Return the error between the desired and actual equivalent gap."""
+
+        nv = MicroVehicle.default_micro_vehicle(self.sim.speed_limit)
+
+        # maximum gap in the presence of one rl vehicle
+        s_eq_max = (nv.length - num_vehicles * 5) / (num_vehicles - 1)
+
+        v0 = nv.target_speed
+        s0 = nv.min_space
+        tau = nv.time_pref
+        gamma = IDM_DELTA
+
+        error = s_eq_max - (s0 + v * tau) * (1 - (v / v0) ** gamma) ** -0.5
+
+        return error
+
+    def calculateRewardWaveAttenuation(self):
+
         self.rew_buf = self.rew_buf.detach()
 
-        # avg_idm_vehicle_speed = self.sim.vehicle_speed[:, self.num_auto_vehicle:].clone().mean(dim=1)
-        # avg_auto_vehicle_speed = self.sim.vehicle_speed[:, :self.num_auto_vehicle].clone().mean(dim=1)
-        # self.rew_buf = torch.clamp((avg_idm_vehicle_speed + 0.5 * avg_auto_vehicle_speed) / (self.speed_limit * 0.8), max=1.0)
-        # # self.rew_buf = torch.clamp(avg_idm_vehicle_speed / (self.speed_limit * 0.8), max=1.0)
+        vel = self.sim.vehicle_speed[:, self.num_auto_vehicle:].clone().mean(dim=1)
 
-        # Add penalty for emergency braking; this term is negative 
-        # Penalty is less severe if the vehicle is already braking 
-        emergency_braking_penalty = (self.sim.auto_vehicle_past_headway_thresh * \
-                                    ((self.sim.emergency_braking_accel - self.actions)/(torch.max(self.sim.emergency_braking_accel - self.actions)))) \
-                                    .mean(dim=1) 
+        # reward average velocity
+        eta_2 = 4.
+        reward = eta_2 * vel / self.sim.speed_limit 
 
-        # emergency_braking_penalty = emergency_braking_penalty / self.sim.emergency_braking_accel
-        # emergency_braking_penalty = self.sim.auto_vehicle_past_headway_thresh.clone().mean(dim=1)
-
-        # average disparity to desired speed of idm vehicles;
-        abs_idm_vehicle_speed_diff = torch.abs(self.sim.vehicle_speed[:, self.num_auto_vehicle:] - self.desired_speed_limit).mean(dim=1) #[0]
-        abs_idm_vehicle_speed_diff = torch.clamp(abs_idm_vehicle_speed_diff / self.desired_speed_limit, max=1.0)
-        self.rew_buf = (1.0 - abs_idm_vehicle_speed_diff) + 0.2*emergency_braking_penalty
-
+        # punish accelerations (should lead to reduced stop-and-go waves)
+        eta = 1 
+        mean_actions = self.actions.clone().mean(dim=1)
+        accel_threshold = 0
+        
+        # set reward buffer
+        self.rew_buf = torch.where(mean_actions > accel_threshold, reward + eta * (accel_threshold - mean_actions), 0)
+        
         # reset agents
         self.reset_buf = torch.where(self.progress_buf > self.episode_length - 1, torch.ones_like(self.reset_buf), self.reset_buf)
 
         # reset collided envs;
         collided = self.sim.check_auto_collision()
         self.reset_buf[collided] = 1.0
-        self.rew_buf[collided] = -1.0
+        self.rew_buf[collided] = 0 # let's set collided env to 0 for now instead of -1
 
         # reset out of lane;
         if not self.no_steering:
             outoflane = self.sim.check_auto_outoflane()
             self.reset_buf[outoflane] = 1.0
-            self.rew_buf[collided] = -1.0
+            self.rew_buf[collided] = 0 # same with out of lane

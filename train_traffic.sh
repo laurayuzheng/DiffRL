@@ -6,11 +6,11 @@
 #     --seed 1 \
 #     --rl_device cpu
 
-# Roundabout (PPO)
+# Ring (PPO)
 python ./examples/train_rl.py \
     --cfg examples/cfg/ppo/traffic_ring.yaml \
     --logdir ./examples/logs/traffic_ring/ppo \
-    --seed 1 \
+    --seed 2 \
     --rl_device cpu
 
 # PaceCar (GradPPO)

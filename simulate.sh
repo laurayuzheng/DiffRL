@@ -1,7 +1,7 @@
 # TrafficPaceCarEnv
 # TrafficRoundaboutEnv
 
-# python examples/test_env.py --env TrafficRingEnv --num-envs 4 --render
+# python examples/test_env.py --env TrafficRingEnv --num-envs 1 --render
 
 DEVICE='cpu'
 ROUNDABOUT_ENV_CFG='examples/cfg/grad_ppo/traffic_roundabout.yaml' 
@@ -17,9 +17,9 @@ RING_ENV_LOGDIR='examples/logs/traffic_ring/ppo'
 python examples/train_rl.py \
     --rl_device=${DEVICE} \
     --cfg=${RING_ENV_CFG} \
-    --checkpoint=./examples/logs/traffic_ring/ppo/03-28-2023-16-42-48/nn/last_df_traffic_ring_ppoep1000rew[569.6923].pth \
+    --checkpoint=./examples/logs/traffic_ring/ppo/wave_attn_second_try/nn/last_df_traffic_ring_ppoep4300rew[4790.4644].pth \
     --play \
-    --seed 1 \
+    --seed 2 \
     --render 
 
 # python examples/train_rl.py \
