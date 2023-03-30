@@ -65,6 +65,11 @@ Install Ray
 pip install ray
 ````
 
+Install Highway Env 
+````
+pip install highway-env
+````
+
 #### Test Examples
 
 A test example can be found in the `examples` folder.

@@ -1,11 +1,13 @@
 name: diffrl
 channels:
   - pytorch
+  - nvidia
   - defaults
 dependencies:
   - python=3.8
-  - pytorch=1.11.0
+  - pytorch=2.0.0
   - torchvision
+  - pytorch-cuda=11.7
   - pip:
     - pyyaml
     - tensorboard
