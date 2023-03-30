@@ -45,7 +45,7 @@ env = env_fn(num_envs = args.num_envs, \
             MM_caching_frequency = 16, \
             no_grad = True, \
             no_steering = True, \
-            num_idm_vehicle = 2, \
+            num_idm_vehicle = 20, \
             num_auto_vehicle = 1)
 
 obs = env.reset()

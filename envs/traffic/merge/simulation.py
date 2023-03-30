@@ -27,6 +27,7 @@ class MergeSim(ParallelTrafficSim):
         merge_lane_id = 2
 
         lane_width = AbstractLane.DEFAULT_WIDTH
+        
         for i in range(2): # self.num_lanes 
             
             next_start = 0

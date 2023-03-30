@@ -1,3 +1,9 @@
+'''
+Rough implementation of the Merge Environment from FLOW in this differentiable simulator. 
+https://github.com/laurayuzheng/flow/blob/master/flow/envs/merge.py
+
+'''
+
 from envs.dflex_env import DFlexEnv
 import torch
 
@@ -18,14 +24,15 @@ class TrafficMergeEnv(DFlexEnv):
     def __init__(self, render=False, device='cuda:0', num_envs=64, seed=0, 
                 episode_length=500, no_grad=True, stochastic_init=False,
                 MM_caching_frequency = 1, early_termination = False,
-                num_auto_vehicle=1, num_idm_vehicle=10, speed_limit=20.0, 
-                no_steering=True):
+                num_auto_vehicle=5, num_idm_vehicle=20, speed_limit=30.0, 
+                desired_speed_limit=25.0, no_steering=True):
 
         # assert no_steering, "Roundabout Env does not support steering"
 
         self.num_auto_vehicle = num_auto_vehicle
         self.num_idm_vehicle = num_idm_vehicle
         self.speed_limit = speed_limit
+        self.desired_speed_limit = desired_speed_limit
         self.no_steering = no_steering
 
         self.steering_bound = np.deg2rad(10.0)
@@ -33,7 +40,7 @@ class TrafficMergeEnv(DFlexEnv):
         if no_steering:
             self.steering_bound = 0.0
 
-        self.acceleration_bound = 8.0
+        self.acceleration_bound = 3.0
 
         # pos, vel, idm properties;
         self.num_obs_per_vehicle = 2 + 2 + 6
@@ -190,10 +197,18 @@ class TrafficMergeEnv(DFlexEnv):
 
         self.rew_buf = self.rew_buf.detach()
 
-        avg_idm_vehicle_speed = self.sim.vehicle_speed[:, self.num_auto_vehicle:].clone().mean(dim=1)
-        avg_auto_vehicle_speed = self.sim.vehicle_speed[:, :self.num_auto_vehicle].clone().mean(dim=1)
-        self.rew_buf = torch.clamp((avg_idm_vehicle_speed + 0.5 * avg_auto_vehicle_speed) / (self.speed_limit * 0.8), max=1.0)
-        # self.rew_buf = torch.clamp(avg_idm_vehicle_speed / (self.speed_limit * 0.8), max=1.0)
+        abs_idm_vehicle_speed_diff = torch.abs(self.sim.vehicle_speed[:, self.num_auto_vehicle:] - self.desired_speed_limit).mean(dim=1)
+        abs_idm_vehicle_speed_diff = torch.clamp(abs_idm_vehicle_speed_diff / self.speed_limit, max=1.0)
+        cost1 = (1.0 - abs_idm_vehicle_speed_diff)
+        
+        t_min = 1  # smallest acceptable time headway
+        t_headway = self.sim.vehicle_pos_delta[:, :self.num_auto_vehicle].clone() / self.sim.vehicle_speed[:, :self.num_auto_vehicle].clone()
+        t_headway = torch.where(t_headway > 0, t_headway, 0)
+        cost2 = torch.where((t_headway - t_min) > 0, (t_headway - t_min), 0).sum(dim=1)
+
+        eta1, eta2 = 1.00, 0.10
+
+        self.rew_buf = eta1*cost1 + eta2*cost2 
 
         # reset agents
         self.reset_buf = torch.where(self.progress_buf > self.episode_length - 1, torch.ones_like(self.reset_buf), self.reset_buf)
