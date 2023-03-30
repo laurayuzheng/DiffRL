@@ -1,7 +1,7 @@
 # TrafficPaceCarEnv
 # TrafficRoundaboutEnv
 
-# python examples/test_traffic_env.py --env TrafficRingEnv --num-envs 1 --render
+python examples/test_traffic_env.py --env TrafficMergeEnv --num-envs 1 --render
 
 DEVICE='cpu'
 ROUNDABOUT_ENV_CFG='examples/cfg/grad_ppo/traffic_roundabout.yaml' 
@@ -14,13 +14,13 @@ RING_ENV_CFG='examples/cfg/ppo/traffic_ring.yaml'
 RING_ENV_LOGDIR='examples/logs/traffic_ring/ppo'
 
 # Simulate GradPPO on Traffic Roundabout
-python examples/train_rl.py \
-    --rl_device=${DEVICE} \
-    --cfg=${RING_ENV_CFG} \
-    --checkpoint=./examples/logs/traffic_ring/ppo/wave_attn_second_try/nn/last_df_traffic_ring_ppoep4300rew[4790.4644].pth \
-    --play \
-    --seed 2 \
-    --render 
+# python examples/train_rl.py \
+#     --rl_device=${DEVICE} \
+#     --cfg=${RING_ENV_CFG} \
+#     --checkpoint=./examples/logs/traffic_ring/ppo/03-30-2023-12-25-01/nn/last_df_traffic_ring_ppoep5001rew[5017.7715].pth \
+#     --play \
+#     --seed 2 \
+#     --render 
 
 # python examples/train_rl.py \
 #     --rl_device=${DEVICE} \

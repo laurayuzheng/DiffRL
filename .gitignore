@@ -7,3 +7,4 @@ externals/traffic/build/
 externals/traffic/dist/
 *.avi
 *.gif
+outputs/
