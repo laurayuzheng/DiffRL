@@ -195,6 +195,10 @@ if __name__ == '__main__':
     cfg_train["params"]["general"] = {}
     for key in vargs.keys():
         cfg_train["params"]["general"][key] = vargs[key]
+        
+    # @sanghyun: seeding for vanilla [rl_games] impl;
+    # [seed] should not be None or 0 to be valid;
+    cfg_train["params"]["seed"] = args.seed
 
     # save config
     if cfg_train['params']['general']['train']:
