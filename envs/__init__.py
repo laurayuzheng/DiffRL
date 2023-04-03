@@ -21,6 +21,7 @@ from envs.traffic.pace_car.env import TrafficPaceCarEnv
 from envs.traffic.roundabout.env import TrafficRoundaboutEnv
 from envs.traffic.ring.env import TrafficRingEnv
 from envs.traffic.merge.env import TrafficMergeEnv
+from envs.traffic.highway.env import TrafficHighwayEnv
 
 from envs.traffic.single_pace_car.scenario_a.env import TrafficSinglePaceCarEnv_A
 from envs.traffic.single_pace_car.scenario_b.env import TrafficSinglePaceCarEnv_B

@@ -1,7 +1,9 @@
 # TrafficPaceCarEnv
 # TrafficRoundaboutEnv
+# TrafficMergeEnv
+# TrafficHighwayEnv
 
-python examples/test_traffic_env.py --env TrafficMergeEnv --num-envs 1 --render
+python examples/test_traffic_env.py --env TrafficHighwayEnv --num-envs 1 --render
 
 DEVICE='cpu'
 ROUNDABOUT_ENV_CFG='examples/cfg/grad_ppo/traffic_roundabout.yaml' 

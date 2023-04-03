@@ -34,7 +34,10 @@ class TrafficPaceCarEnv(DFlexEnv):
         self.num_obs_per_vehicle = 2 + 2 + 6
 
         # steering, accelerations;
-        self.num_action_per_vehicle = 2
+        if no_steering:
+            self.num_action_per_vehicle = 1
+        else:
+            self.num_action_per_vehicle = 2
 
         num_obs = (num_idm_vehicle + num_auto_vehicle) * self.num_obs_per_vehicle
         num_act = num_auto_vehicle * self.num_action_per_vehicle

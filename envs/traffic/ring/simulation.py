@@ -28,7 +28,7 @@ class RingSim(ParallelTrafficSim):
         for lane_id in range(8):
 
             alpha = 24.
-            radius = 24.
+            radius = 48.
 
             if lane_id == 0:
                 sp, ep = 90. - alpha, alpha

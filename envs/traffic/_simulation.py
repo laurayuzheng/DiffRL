@@ -576,7 +576,7 @@ class ParallelTrafficSim:
         if self.no_steering:
 
             accelerations = actions # (num env, num vehicle)
-            assert accelerations.shape == self.auto_vehicle_past_headway_thresh.shape 
+            assert accelerations.shape == self.auto_vehicle_past_headway_thresh.shape, "accelerations shape: {}, headway thresh shape: {}".format(accelerations.shape, self.auto_vehicle_past_headway_thresh.shape)
             
             # Emergency braking for auto vehicles past the maximum headway
             accelerations = th.where(self.auto_vehicle_past_headway_thresh > 0, self.emergency_braking_accel, accelerations)

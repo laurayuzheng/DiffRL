@@ -27,11 +27,12 @@ def set_seed(seed):
 parser = argparse.ArgumentParser()
 parser.add_argument('--env', type = str, default = 'TrafficRoundaboutEnv')
 parser.add_argument('--num-envs', type = int, default = 1)
-parser.add_argument('--render', default = True, action = 'store_true')
+parser.add_argument('--render', default = False, action = 'store_true')
 
 args = parser.parse_args()
 
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+# device = 'cuda' if torch.cuda.is_available() else 'cpu'
+device = 'cpu'
 
 seeding()
 
@@ -45,8 +46,10 @@ env = env_fn(num_envs = args.num_envs, \
             MM_caching_frequency = 16, \
             no_grad = True, \
             no_steering = True, \
-            num_idm_vehicle = 20, \
-            num_auto_vehicle = 1)
+            num_idm_vehicle = 22, \
+            num_auto_vehicle = 0, \
+            num_lane = 4
+        )
 
 obs = env.reset()
 
@@ -55,13 +58,16 @@ num_actions = env.num_actions
 t_start = time.time()
 
 reward_episode = 0.
-for i in range(1000):
-    # actions = torch.randn((args.num_envs, num_actions), device=device)
-    actions = torch.Tensor([1]).expand(args.num_envs, -1).to(device)
+for i in range(1500):
+    actions = torch.zeros((args.num_envs, num_actions), device=device)
+    # actions = torch.Tensor([0]).expand(args.num_envs, -1).to(device)
     obs, reward, done, info = env.step(actions)
     reward_episode += reward
 
 t_end = time.time()
+
+print("Total time: %f s", (t_end - t_start))
+print("Steps / second: ", 1000 / (t_end - t_start))
 
 print('fps = ', 1000 * args.num_envs / (t_end - t_start))
 print('mean reward = ', reward_episode.mean().detach().cpu().item())
