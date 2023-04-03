@@ -1,3 +1,27 @@
+# COMMANDS
+
+## PPO
+
+### Training
+
+For training, use following command. Here we assume training ring environment.
+
+```
+python examples/train_rl.py --cfg ./examples/cfg/ppo/traffic_ring.yaml --logdir ./examples/logs/traffic_ring/ppo --seed 1
+```
+
+Note that seed must not be None or 0 to be valid.
+
+### Evaluation
+
+For evaluating trained policy, use following command. 
+
+```
+python examples/train_rl.py --play --cfg ./examples/cfg/ppo/traffic_ring.yaml --seed 0 --checkpoint {*.pth}
+```
+
+In most cases, we would want to give 0 seed, because we often want to test policy in a randomized environment, not a fixed one.
+
 # SHAC
 
 This repository contains the implementation for the paper [Accelerated Policy Learning with Parallel Differentiable Simulation](https://short-horizon-actor-critic.github.io/) (ICLR 2022).
