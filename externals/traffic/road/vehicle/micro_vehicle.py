@@ -40,11 +40,11 @@ class MicroVehicle(Vehicle):
 
         # maximum acceleration;
 
-        a_max = speed_limit * 1.75
+        a_max = speed_limit * 0.73
 
         # preferred acceleration;
         
-        a_pref = speed_limit * 1.25
+        a_pref = speed_limit * 1.67
 
         # target speed;
         
@@ -56,7 +56,7 @@ class MicroVehicle(Vehicle):
 
         # preferred time to go;
         
-        time_pref = 0.4
+        time_pref = speed_limit * 0.005
 
         vehicle = MicroVehicle(-1, 
                                 0, 

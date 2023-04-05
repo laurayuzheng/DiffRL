@@ -25,7 +25,7 @@ class ParallelTrafficSim:
         self.no_steering = no_steering
         self.device = device
         self.pacecar_env = False
-        self.auto_vehicle_max_headway = 8.
+        self.auto_vehicle_max_headway = 0.
         self.emergency_braking_accel = -10.
 
         self.reset()
@@ -121,10 +121,9 @@ class ParallelTrafficSim:
 
         for i in range(self.num_lane):
             next_lanes = self.next_lane[i]
-            j = 0
-            while j < self.num_lane:
+        
+            for j in range(self.num_lane):
                 self.next_lane_tensor[i, j] = next_lanes[j % len(next_lanes)]
-                j += 1
 
         # connectivity;
         for i in range(self.num_lane):

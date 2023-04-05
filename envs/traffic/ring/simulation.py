@@ -28,7 +28,7 @@ class RingSim(ParallelTrafficSim):
         for lane_id in range(8):
 
             alpha = 24.
-            radius = 48.
+            radius = 36.
 
             if lane_id == 0:
                 sp, ep = 90. - alpha, alpha
@@ -79,10 +79,14 @@ class RingSim(ParallelTrafficSim):
                 # this is needed to accelerate (generalized) training;
                 auto_starting_lanes = [th.randint(0, 7, [1]).cpu().item()]
 
-                # idm vehicles only start from border straight lanes;
                 idm_starting_lanes = list(range(8))
                 idm_starting_lanes.remove(auto_starting_lanes[0])
-                num_idm_starting_lanes = len(idm_starting_lanes)
+
+                num_idm_starting_lanes = th.randint(len(idm_starting_lanes) // 3, len(idm_starting_lanes), [1]).cpu().item()
+                indices = list(th.randperm(len(idm_starting_lanes))[:num_idm_starting_lanes])
+                idm_starting_lanes = [idm_starting_lanes[i] for i in indices]
+
+                # num_idm_starting_lanes = len(idm_starting_lanes)
 
                 num_idm_vehicle_per_lane = []
                 for i in range(num_idm_starting_lanes):
@@ -123,7 +127,7 @@ class RingSim(ParallelTrafficSim):
 
                     for j in range(0, num_idm_vehicle_on_curr_lane):
                         nv = MicroVehicle.default_micro_vehicle(self.speed_limit)
-                        nv.position = j * 2.0 * nv.length
+                        nv.position = j * 1.3 * nv.length
                         
                         assert nv.position < curr_lane_length, "Please reduce number of IDM vehicles, lane overflow!"
                         

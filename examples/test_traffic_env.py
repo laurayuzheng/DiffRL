@@ -46,9 +46,10 @@ env = env_fn(num_envs = args.num_envs, \
             MM_caching_frequency = 16, \
             no_grad = True, \
             no_steering = True, \
-            num_idm_vehicle = 22, \
+            num_idm_vehicle = 15, \
             num_auto_vehicle = 0, \
-            num_lane = 4
+            speed_limit=60.0
+            # num_lane = 4
         )
 
 obs = env.reset()
@@ -58,7 +59,8 @@ num_actions = env.num_actions
 t_start = time.time()
 
 reward_episode = 0.
-for i in range(1500):
+for i in range(10000):
+    print(i)
     actions = torch.zeros((args.num_envs, num_actions), device=device)
     # actions = torch.Tensor([0]).expand(args.num_envs, -1).to(device)
     obs, reward, done, info = env.step(actions)

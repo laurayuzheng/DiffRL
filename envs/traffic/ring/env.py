@@ -200,35 +200,6 @@ class TrafficRingEnv(DFlexEnv):
 
         self.calculateRewardWaveAttenuation()
 
-    # def calculateReward(self):
-
-    #     self.rew_buf = self.rew_buf.detach()
-
-    #     # Add penalty for emergency braking; this term is negative 
-    #     # Penalty is less severe if the vehicle is already braking 
-    #     emergency_braking_penalty = (self.sim.auto_vehicle_past_headway_thresh * \
-    #                                 ((self.sim.emergency_braking_accel - self.actions)/(torch.max(self.sim.emergency_braking_accel - self.actions)))) \
-    #                                 .mean(dim=1) 
-
-    #     # average disparity to desired speed of idm vehicles;
-    #     abs_idm_vehicle_speed_diff = torch.abs(self.sim.vehicle_speed[:, self.num_auto_vehicle:] - self.desired_speed_limit).mean(dim=1) #[0]
-    #     abs_idm_vehicle_speed_diff = torch.clamp(abs_idm_vehicle_speed_diff / self.desired_speed_limit, max=1.0)
-    #     self.rew_buf = (1.0 - abs_idm_vehicle_speed_diff) + 0.2*emergency_braking_penalty
-
-    #     # reset agents
-    #     self.reset_buf = torch.where(self.progress_buf > self.episode_length - 1, torch.ones_like(self.reset_buf), self.reset_buf)
-
-    #     # reset collided envs;
-    #     collided = self.sim.check_auto_collision()
-    #     self.reset_buf[collided] = 1.0
-    #     self.rew_buf[collided] = -1.0
-
-    #     # reset out of lane;
-    #     if not self.no_steering:
-    #         outoflane = self.sim.check_auto_outoflane()
-    #         self.reset_buf[outoflane] = 1.0
-    #         self.rew_buf[collided] = -1.0
-
     def v_eq_max_function(self, num_vehicles, v=4):
         """Return the error between the desired and actual equivalent gap."""
 
