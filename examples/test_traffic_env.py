@@ -19,6 +19,8 @@ from utils.common import *
 
 import argparse
 
+STEPS = 10000
+
 def set_seed(seed):
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -39,6 +41,7 @@ seeding()
 env_fn = getattr(envs, args.env)
 
 env = env_fn(num_envs = args.num_envs, \
+            episode_length = STEPS, \
             device = device, \
             render = args.render, \
             seed = 0, \
@@ -58,7 +61,7 @@ num_actions = env.num_actions
 t_start = time.time()
 
 reward_episode = 0.
-for i in range(10000):
+for i in range(STEPS):
     actions = torch.zeros((args.num_envs, num_actions), device=device)
     # actions = torch.Tensor([0]).expand(args.num_envs, -1).to(device)
     obs, reward, done, info = env.step(actions)

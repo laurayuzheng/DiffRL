@@ -24,7 +24,7 @@ from scipy.optimize import fsolve
 class TrafficFigureEightEnv(DFlexEnv):
 
     def __init__(self, render=False, device='cuda:0', num_envs=64, seed=0, 
-                episode_length=500, no_grad=True, stochastic_init=False,
+                episode_length=1000, no_grad=True, stochastic_init=False,
                 MM_caching_frequency = 1, early_termination = False,
                 num_auto_vehicle=1, num_idm_vehicle=10, speed_limit=20.0, 
                 no_steering=True):

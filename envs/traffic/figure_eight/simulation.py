@@ -19,8 +19,8 @@ class FigureEightSim(ParallelTrafficSim):
 
         super().reset()
 
-        radius = 30.
-        transform = np.array([-1, 1])
+        radius = 30. # radius of figure eight rings
+        transform = np.array([-1, 1]) # this is to transform flow coordinates --> highway_env
 
         # add intersection lanes; 
         center = np.array([0, 0]) * transform
@@ -28,8 +28,6 @@ class FigureEightSim(ParallelTrafficSim):
         top = np.array([0, radius]) * transform
         left = np.array([-radius, 0]) * transform
         bottom = np.array([0, -radius]) * transform
-
-
         
         line_type = [LineType.CONTINUOUS, LineType.CONTINUOUS]
         self.make_straight_lane(0, left, center, "left", "center", line_type)
@@ -39,10 +37,8 @@ class FigureEightSim(ParallelTrafficSim):
 
         # add circular lanes;
         
-        circle4_phase = np.array([270, 0])
-        circle5_phase = np.array([-180, 90]) 
-        sp4, ep4 = circle4_phase[0], circle4_phase[1] 
-        sp5, ep5 = circle5_phase[0], circle5_phase[1]
+        sp4, ep4 = 270, 0  # counter clockwise; decreasing
+        sp5, ep5 = -180, 90  # clockwise; increasing
 
         sp4, ep4 = np.deg2rad(sp4), np.deg2rad(ep4)
         sp5, ep5 = np.deg2rad(sp5), np.deg2rad(ep5)
@@ -68,10 +64,10 @@ class FigureEightSim(ParallelTrafficSim):
 
 
         self.next_lane[0] = [1]
-        self.next_lane[2] = [3]
         self.next_lane[1] = [4]
-        self.next_lane[3] = [5]
         self.next_lane[4] = [2]
+        self.next_lane[2] = [3]
+        self.next_lane[3] = [5]
         self.next_lane[5] = [0]
 
         self.fill_next_lane_tensor()
