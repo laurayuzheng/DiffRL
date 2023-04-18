@@ -11,99 +11,68 @@ class FigureEightSim(ParallelTrafficSim):
 
     def __init__(self, num_env: int, num_auto_vehicle: int, num_idm_vehicle: int, num_lane: int, speed_limit: float, no_steering: bool, device):
 
-        # num_lane = 16
         self.ring_lanes = 6 
-        num_lane = self.ring_lanes * 2
 
-        super().__init__(num_env, num_auto_vehicle, num_idm_vehicle, num_lane, speed_limit, no_steering, device)
+        super().__init__(num_env, num_auto_vehicle, num_idm_vehicle, self.ring_lanes, speed_limit, no_steering, device)
 
     def reset(self):
 
         super().reset()
 
-        curr_num_lane = 0
+        radius = 30.
+        transform = np.array([-1, 1])
+
+        # add intersection lanes; 
+        center = np.array([0, 0]) * transform
+        right = np.array([radius, 0]) * transform
+        top = np.array([0, radius]) * transform
+        left = np.array([-radius, 0]) * transform
+        bottom = np.array([0, -radius]) * transform
+
+
+        
+        line_type = [LineType.CONTINUOUS, LineType.CONTINUOUS]
+        self.make_straight_lane(0, left, center, "left", "center", line_type)
+        self.make_straight_lane(1, center, right, "center", "right", line_type)
+        self.make_straight_lane(2, top, center, "top", "center", line_type)
+        self.make_straight_lane(3, center, bottom, "center", "bottom", line_type)
 
         # add circular lanes;
-
-        # only add outer circular lane for now;
-
-        lane_ids = list(range(self.ring_lanes+2))
-        lane_ids = sorted([x for x in lane_ids if x not in [1,2]])
-        alpha = 24.
-        radius = 24.
         
-        # lower ring
-        for i, lane_id in enumerate(lane_ids):
+        circle4_phase = np.array([270, 0])
+        circle5_phase = np.array([-180, 90]) 
+        sp4, ep4 = circle4_phase[0], circle4_phase[1] 
+        sp5, ep5 = circle5_phase[0], circle5_phase[1]
 
-            if lane_id == 0:
-                sp, ep = 90. - alpha, alpha
-            elif lane_id == 1:
-                sp, ep = alpha, -alpha
-            elif lane_id == 2:
-                sp, ep = -alpha, -90. + alpha
-            elif lane_id == 3:
-                sp, ep = -90. + alpha, -90. - alpha
-            elif lane_id == 4:
-                sp, ep = -90. - alpha, -180. + alpha
-            elif lane_id == 5:
-                sp, ep = -180. + alpha, -180. - alpha
-            elif lane_id == 6:
-                sp, ep = 180. - alpha, 90. + alpha
-            else:
-                sp, ep = 90. + alpha, 90. - alpha
+        sp4, ep4 = np.deg2rad(sp4), np.deg2rad(ep4)
+        sp5, ep5 = np.deg2rad(sp5), np.deg2rad(ep5)
 
-            sp, ep = np.deg2rad(sp), np.deg2rad(ep)
-            center = np.array([0., 0.])
+        self.make_circular_lane(4, 
+                                center + np.array([radius, radius]) * transform, 
+                                radius, 
+                                sp4, 
+                                ep4, 
+                                False, 
+                                "right", 
+                                "top",
+                                line_type)
+        self.make_circular_lane(5, 
+                                center - np.array([radius, radius]) * transform, 
+                                radius, 
+                                sp5, 
+                                ep5, 
+                                True, 
+                                "bottom", 
+                                "left", 
+                                line_type)
 
-            self.make_circular_lane(curr_num_lane, 
-                                    center, 
-                                    radius, 
-                                    sp, 
-                                    ep, 
-                                    False, 
-                                    "circular_{}".format(i), 
-                                    "circular_{}".format(i+1))
 
-            self.add_next_lane(curr_num_lane, (curr_num_lane + 1) % self.ring_lanes)
-            curr_num_lane += 1
-
-        lane_ids = list(range(self.ring_lanes+2))
-        lane_ids = sorted([x for x in lane_ids if x not in [5,6]])
-
-        # upper ring
-        for i, lane_id in enumerate(lane_ids):
-
-            if lane_id == 0:
-                sp, ep = 90. - alpha, alpha
-            elif lane_id == 1:
-                sp, ep = alpha, -alpha
-            elif lane_id == 2:
-                sp, ep = -alpha, -90. + alpha
-            elif lane_id == 3:
-                sp, ep = -90. + alpha, -90. - alpha
-            elif lane_id == 4:
-                sp, ep = -90. - alpha, -180. + alpha
-            elif lane_id == 5:
-                sp, ep = -180. + alpha, -180. - alpha
-            elif lane_id == 6:
-                sp, ep = 180. - alpha, 90. + alpha
-            else:
-                sp, ep = 90. + alpha, 90. - alpha
-
-            sp, ep = np.deg2rad(sp), np.deg2rad(ep)
-            center = np.array([2.4*radius, -1*radius])
-
-            self.make_circular_lane(curr_num_lane, 
-                                    center, 
-                                    radius, 
-                                    sp, 
-                                    ep, 
-                                    False, 
-                                    "circular_{}".format(i+self.ring_lanes), 
-                                    "circular_{}".format(i+self.ring_lanes+1))
-
-            self.add_next_lane(curr_num_lane, (curr_num_lane + 1) % self.ring_lanes)
-            curr_num_lane += 1
+        self.next_lane[0] = [1]
+        self.next_lane[2] = [3]
+        self.next_lane[1] = [4]
+        self.next_lane[3] = [5]
+        self.next_lane[4] = [2]
+        self.next_lane[5] = [0]
 
         self.fill_next_lane_tensor()
 
@@ -168,7 +137,7 @@ class FigureEightSim(ParallelTrafficSim):
                         nv = MicroVehicle.default_micro_vehicle(self.speed_limit)
                         nv.position = j * 2.0 * nv.length
                         
-                        assert nv.position < curr_lane_length, "Please reduce number of IDM vehicles, lane overflow!"
+                        # assert nv.position < curr_lane_length, "Please reduce number of IDM vehicles, lane overflow!"
                         
                         vid = self.idm_vehicle_id(idm_vehicle_id)
                         self.vehicle_position[eid, vid] = self.tensorize_value(nv.position)
