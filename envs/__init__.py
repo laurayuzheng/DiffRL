@@ -20,6 +20,7 @@ from envs._dejong import DejongEnv
 from envs.traffic.pace_car.env import TrafficPaceCarEnv
 from envs.traffic.roundabout.env import TrafficRoundaboutEnv
 from envs.traffic.ring.env import TrafficRingEnv
+from envs.traffic.figure_eight.env import TrafficFigureEightEnv
 from envs.traffic.merge.env import TrafficMergeEnv
 from envs.traffic.highway.env import TrafficHighwayEnv
 

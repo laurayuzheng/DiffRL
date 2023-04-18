@@ -455,12 +455,12 @@ class ParallelTrafficSim:
         
         CLOSE_DIST = AbstractLane.DEFAULT_WIDTH * 0.5
         min_auto_distance_idx = th.where(min_auto_distance < CLOSE_DIST, 
-                                            min_auto_distance_idx,
-                                            -1)
+                                        min_auto_distance_idx,
+                                        -1)
 
         tmp_idx = th.where(min_auto_distance > CLOSE_DIST)
         sel_auto_longitudinal[tmp_idx] = 1000.0
-
+        
         sel_auto_longitudinal = th.where(min_auto_distance < AbstractLane.DEFAULT_WIDTH,
                                             sel_auto_longitudinal,
                                             1000.0) # some very large value so that it affects nothing;
