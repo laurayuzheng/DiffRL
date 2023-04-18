@@ -46,9 +46,8 @@ env = env_fn(num_envs = args.num_envs, \
             MM_caching_frequency = 16, \
             no_grad = True, \
             no_steering = True, \
-            num_idm_vehicle = 15, \
+            num_idm_vehicle = 2, \
             num_auto_vehicle = 0, \
-            speed_limit=60.0
             # num_lane = 4
         )
 
@@ -69,7 +68,7 @@ for i in range(10000):
 t_end = time.time()
 
 print("Total time: %f s", (t_end - t_start))
-print("Steps / second: ", 1000 / (t_end - t_start))
+print("Steps / second: ", 1500 / (t_end - t_start))
 
 print('fps = ', 1000 * args.num_envs / (t_end - t_start))
 print('mean reward = ', reward_episode.mean().detach().cpu().item())
