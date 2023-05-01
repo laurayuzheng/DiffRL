@@ -1,4 +1,3 @@
-from time import time
 from typing import Dict, List
 from highway_env.road.road import RoadNetwork as hwRoadNetwork
 from highway_env.road.regulation import RegulatedRoad as hwRoad

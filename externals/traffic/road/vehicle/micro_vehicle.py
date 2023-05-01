@@ -28,7 +28,7 @@ class MicroVehicle(Vehicle):
         self.time_pref = time_pref
 
     @staticmethod
-    def default_micro_vehicle(speed_limit: float):
+    def default_micro_vehicle(speed_limit: float, vehicle_length: float = DEFAULT_VEHICLE_LENGTH):
 
         '''
         Generate a default micro vehicle, of which attributes depend on the speed limit.
@@ -36,7 +36,7 @@ class MicroVehicle(Vehicle):
 
         # vehicle length;
 
-        vehicle_length = DEFAULT_VEHICLE_LENGTH
+        vehicle_length = vehicle_length
 
         # maximum acceleration;
 

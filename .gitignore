@@ -8,3 +8,4 @@ externals/traffic/dist/
 *.avi
 *.gif
 outputs/
+raresim/data/*
