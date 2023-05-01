@@ -10,19 +10,21 @@ import dflex as df
 import numpy as np
 np.set_printoptions(precision=5, linewidth=256, suppress=True)
 
-from envs.traffic.pace_car.simulation import PaceCarSim
+from ngsim_env.simulation import NGParallelSim
 from highway_env.envs.common.graphics import EnvViewer
 
-class TrafficPaceCarEnv(DFlexEnv):
+class TrafficNGSimEnv(DFlexEnv):
 
-    def __init__(self, render=False, device='cuda:0', num_envs=64, seed=0, episode_length=1000, no_grad=True, stochastic_init=False, MM_caching_frequency = 1, early_termination = False,
-                num_auto_vehicle=1, num_idm_vehicle=1, num_lane=1, speed_limit=20.0, desired_speed_limit=10.0, no_steering=False):
+    def __init__(self, csv_path, idx=0, render=False, device='cuda:0', num_envs=1, seed=0, episode_length=1000, 
+                 no_grad=True, stochastic_init=False, MM_caching_frequency = 1, early_termination = False,
+                num_auto_vehicle=1, num_idm_vehicle=1, no_steering=False):
 
-        self.num_auto_vehicle = num_auto_vehicle
-        self.num_idm_vehicle = num_idm_vehicle
-        self.num_lane = num_lane
-        self.speed_limit = speed_limit
-        self.desired_speed_limit = desired_speed_limit
+        self.csv_path = csv_path
+        self.num_auto_vehicle = 0
+        self.num_idm_vehicle = 0
+        self.num_lane = 5
+        self.speed_limit = 105
+        self.desired_speed_limit = 105
         self.no_steering = no_steering
 
         self.steering_bound = np.deg2rad(10.0)
@@ -42,25 +44,19 @@ class TrafficPaceCarEnv(DFlexEnv):
         num_obs = (num_idm_vehicle + num_auto_vehicle) * self.num_obs_per_vehicle
         num_act = num_auto_vehicle * self.num_action_per_vehicle
 
-        super(TrafficPaceCarEnv, self).__init__(num_envs, num_obs, num_act, episode_length, MM_caching_frequency, seed, no_grad, render, device)
+        super(TrafficNGSimEnv, self).__init__(num_envs, num_obs, num_act, episode_length, MM_caching_frequency, seed, no_grad, render, device)
 
         self.stochastic_init = stochastic_init
         self.early_termination = early_termination
 
         self.viewer = None
 
-        self.init_sim()
+        self.init_sim(idx)
 
-    def init_sim(self):
+    def init_sim(self, idx):
         
         self.dt = 0.03
-        self.sim = PaceCarSim(self.num_envs, 
-                                self.num_auto_vehicle, 
-                                self.num_idm_vehicle, 
-                                self.num_lane,
-                                self.speed_limit,
-                                self.no_steering,
-                                self.device)
+        self.sim = NGParallelSim(self.csv_path, idx, self.no_steering, self.device)
         
     def render(self, mode = 'human'):
         # render only first env;
@@ -131,16 +127,14 @@ class TrafficPaceCarEnv(DFlexEnv):
 
         return self.obs_buf, self.rew_buf, self.reset_buf, self.extras
     
-    def reset(self, env_ids=None, force_reset=True):
+    def reset(self, idx=0, env_ids=None, force_reset=True):
         if env_ids is None:
             if force_reset == True:
                 env_ids = torch.arange(self.num_envs, dtype=torch.long, device=self.device)
 
         if env_ids is not None:
-            self.sim.reset_env(env_ids)
-            
+            self.sim.reset_env(env_ids, idx=idx)
             self.progress_buf[env_ids] = 0
-
             self.calculateObservations()
 
         return self.obs_buf
@@ -186,24 +180,9 @@ class TrafficPaceCarEnv(DFlexEnv):
         self.rew_buf = self.rew_buf.detach()
 
         # average disparity to desired speed of idm vehicles;
-        # idm_vehicle_speed_diff = self.sim.vehicle_speed[:, self.num_auto_vehicle:] - self.desired_speed_limit
-        # abs_idm_vehicle_speed_diff_a = torch.where(idm_vehicle_speed_diff < 0., torch.abs(idm_vehicle_speed_diff), torch.zeros_like(idm_vehicle_speed_diff)) * 1.
-        # abs_idm_vehicle_speed_diff_b = torch.where(idm_vehicle_speed_diff > 0., torch.abs(idm_vehicle_speed_diff), torch.zeros_like(idm_vehicle_speed_diff)) * 2.
-        # abs_idm_vehicle_speed_diff = (abs_idm_vehicle_speed_diff_a + abs_idm_vehicle_speed_diff_b).mean(dim=1)
-        # abs_idm_vehicle_speed_diff = torch.clamp(abs_idm_vehicle_speed_diff / (2. * (self.speed_limit - self.desired_speed_limit)), max=1.0)
         abs_idm_vehicle_speed_diff = torch.abs(self.sim.vehicle_speed[:, self.num_auto_vehicle:] - self.desired_speed_limit).mean(dim=1)
         abs_idm_vehicle_speed_diff = torch.clamp(abs_idm_vehicle_speed_diff / self.speed_limit, max=1.0)
         self.rew_buf = (1.0 - abs_idm_vehicle_speed_diff)
-
-        # # penalty for excessive control;
-        # actions = self.actions.clone()
-        # actions[:, 0::2] = torch.abs(actions[:, 0::2].clone() / max(self.steering_bound, 1e-3))
-        # actions[:, 1::2] = torch.abs(actions[:, 1::2].clone() / max(self.acceleration_bound, 1e-3))
-        # actions_mean = actions.mean(dim=1)
-        # self.rew_buf = self.rew_buf - actions_mean * 0.001
-
-        # # minimum reward for survival;
-        # self.rew_buf = torch.clip(self.rew_buf, min=0.001)
         
         # reset agents
         self.reset_buf = torch.where(self.progress_buf > self.episode_length - 1, torch.ones_like(self.reset_buf), self.reset_buf)

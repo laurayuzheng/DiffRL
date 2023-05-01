@@ -17,9 +17,9 @@ class MLP(nn.Module):
     def __init__(self):
         super(MLP).__init__()
 
-        self.fc1 = nn.Linear(150, 10)
-        self.fc2 = nn.Linear(10, 10)
-        self.fc3 = nn.Linear(10, 1)
+        self.fc1 = nn.Linear(150, 64)
+        self.fc2 = nn.Linear(64, 32)
+        self.fc3 = nn.Linear(32, 1)
 
     def forward(self, x):
         x = F.relu(self.fc1(x))

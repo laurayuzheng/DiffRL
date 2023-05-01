@@ -193,8 +193,8 @@ class ParallelTrafficSim:
         '''
 
         if self.no_steering:
-            idm_idx = 0 # self.idm_vehicle_id(0)
-            num_idm_vehicle = self.num_vehicle # self.num_idm_vehicle
+            idm_idx = self.idm_vehicle_id(0)
+            num_idm_vehicle = self.num_idm_vehicle
         else:
             idm_idx = self.idm_vehicle_id(0)
             num_idm_vehicle = self.num_idm_vehicle
@@ -202,6 +202,7 @@ class ParallelTrafficSim:
         idm_longitudinal = self.vehicle_position[:, idm_idx:].clone()
         idm_lateral = th.zeros_like(idm_longitudinal)
         idm_speed = self.vehicle_speed[:, idm_idx:].clone()
+
 
         idm_longitudinal = idm_longitudinal.reshape((-1,))
         idm_lateral = idm_lateral.reshape((-1,))
@@ -283,6 +284,7 @@ class ParallelTrafficSim:
         self.vehicle_world_position[:, idm_idx:] = sel_idm_world_position
         self.vehicle_world_velocity[:, idm_idx:] = sel_idm_world_velocity
         self.vehicle_world_heading[:, idm_idx:] = sel_idm_world_heading
+        
 
         return
 
@@ -632,7 +634,8 @@ class ParallelTrafficSim:
         self.vehicle_speed[:, self.num_auto_vehicle:] = (self.vehicle_speed[:, self.num_auto_vehicle:].clone() + acc * delta_time)
 
         # 7. apply action and update state of auto vehicles;
-        self.update_auto_vehicle(actions, delta_time)
+        if self.num_auto_vehicle > 0:
+            self.update_auto_vehicle(actions, delta_time)
 
         # 6. move idm vehicles from lane to lane;
         self.update_idm_vehicle_lane_membership()
