@@ -17,7 +17,7 @@ class TrafficNGSimEnv(DFlexEnv):
 
     def __init__(self, csv_path, idx=0, render=False, device='cuda:0', num_envs=1, seed=0, episode_length=1000, 
                  no_grad=True, stochastic_init=False, MM_caching_frequency = 1, early_termination = False,
-                num_auto_vehicle=1, num_idm_vehicle=1, no_steering=False):
+                num_auto_vehicle=1, num_idm_vehicle=1, no_steering=False, delta_time=0.1):
 
         self.csv_path = csv_path
         self.num_auto_vehicle = 0
@@ -26,6 +26,7 @@ class TrafficNGSimEnv(DFlexEnv):
         self.speed_limit = 105
         self.desired_speed_limit = 105
         self.no_steering = no_steering
+        self.dt = delta_time
 
         self.steering_bound = np.deg2rad(10.0)
         if no_steering:
@@ -55,8 +56,7 @@ class TrafficNGSimEnv(DFlexEnv):
 
     def init_sim(self, idx):
         
-        self.dt = 0.03
-        self.sim = NGParallelSim(self.csv_path, idx, self.no_steering, self.device)
+        self.sim = NGParallelSim(self.csv_path, idx, self.no_steering, self.device, delta_time=self.dt)
         
     def render(self, mode = 'human'):
         # render only first env;

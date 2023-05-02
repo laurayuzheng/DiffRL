@@ -19,16 +19,18 @@ import torch as th
 import pandas as pd
 
 FEET_TO_METERS_C = 0.3048
+# FEET_TO_METERS_C = 1
 
 class NGParallelSim(ParallelTrafficSim):
 
-    def __init__(self, csv_path, idx, no_steering: bool, device):
+    def __init__(self, csv_path, idx, no_steering: bool, device, delta_time=0.1):
 
         self.num_env = 1 
         self.speed_limit = 105 
         self.no_steering = no_steering
         self.device = device
         self.idx = idx
+        self.delta_time = delta_time
 
         # Get info from csv file
         self.csv_path = csv_path
@@ -38,7 +40,8 @@ class NGParallelSim(ParallelTrafficSim):
         tstep = data["Frame_ID"]
 
         df = self.df[self.df["Frame_ID"] == tstep]
-        df = df.sample(frac=1).reset_index(drop=True)
+        # df = df.sample(frac=1).reset_index(drop=True)
+        df = df.reset_index(drop=True)
         self.num_vehicle = len(df) 
         self.num_idm_vehicle = self.num_vehicle
         self.num_auto_vehicle = 0 
@@ -49,6 +52,53 @@ class NGParallelSim(ParallelTrafficSim):
         self.pacecar_env = True
 
         self.reset(idx) 
+
+    @staticmethod 
+    def find_angle_to_x(v):
+        ''' finds the angle between vector v and the x axis '''
+
+        a = np.array(v)
+        b = np.array([1, 0])
+        c = np.dot(a,b) / np.linalg.norm(a) / np.linalg.norm(b)
+
+        theta = np.arccos(np.clip(c, -1, 1))
+
+        return theta 
+    
+    @staticmethod 
+    def find_angle_to_x_vectorized(v):
+        ''' same as find_angle_to_x except is for many rows at a time '''
+
+        a = np.array(v).astype(np.float16)
+        b = np.tile(np.array([1, 0]), (len(a),1)).astype(np.float16)
+        # b = np.array([1,0])
+        c = np.dot(a,b.T) / np.linalg.norm(a) / np.linalg.norm(b)
+
+        thetas = np.arccos(np.clip(c, -1, 1))
+
+        return thetas
+
+    @staticmethod
+    def rotate_data(v, theta):
+        ''' note: theta should be in radians '''
+
+        v = np.array(v)
+        rot_matrix = np.array([[np.cos(theta), -np.sin(theta)], 
+                              [np.sin(theta), np.cos(theta)]]) 
+        
+        assert rot_matrix.shape[-1] == v.shape[0], "rotation matrix and input dimension mismatch: %d %d" % (rot_matrix.shape[-1], v.shape[0])
+
+        return rot_matrix @ v 
+    
+    @staticmethod 
+    def rotate_data_vectorized(v, theta):
+        ''' same as rotate_data except is for many rows at a time '''
+
+        v[:,0] = v[:,0] * np.cos(theta) - v[:,1] * np.sin(theta) 
+        v[:,1] = v[:,0] * np.sin(theta) + v[:,1] * np.cos(theta)
+        
+        return v 
+    
 
     def process_csv(self):
 
@@ -64,6 +114,11 @@ class NGParallelSim(ParallelTrafficSim):
             dtype='object')
         '''
 
+        total_time = df["Global_Time"].max() - df["Global_Time"].min()
+        total_time *= 0.001
+
+        print("dataset total time: ", total_time)
+
         df = df[["Lane_ID", "Frame_ID", "Local_X", "Local_Y", "v_Vel", "v_Length"]]
 
         df["Local_X"] = df["Local_X"] * FEET_TO_METERS_C # convert to meters
@@ -72,11 +127,17 @@ class NGParallelSim(ParallelTrafficSim):
         df["v_Length"] = df["v_Length"] * FEET_TO_METERS_C # convert to meters
 
         df = df.sort_values(["Frame_ID", "Lane_ID", "Local_X"], ascending=True)
+    
+        df['theta_to_x'] = -1.5708 # the rotation in radians to align NGSim data with x axis 
+        df['sim_position'] = NGParallelSim.rotate_data_vectorized(df[['Local_X', 'Local_Y']].to_numpy(), df['theta_to_x'].to_numpy())[:,0]
+        df['sim_position'] = df['sim_position'] - df['sim_position'].min() # make sure min value is 0
+        
+        df = df.drop(columns=["theta_to_x"])
 
         self.df = df
 
         print("data loading finished. here's a preview: ")
-        print(self.df.head(5))
+        print(self.df.head(3))
 
     def _set_simulation_state_from_df(self, tstep, env_id=[]):
         ''' Converts dataframe to Pytorch Tensor observation format.
@@ -84,9 +145,9 @@ class NGParallelSim(ParallelTrafficSim):
             Dataframe must contain rows ["Lane_ID", "Local_X", "Local_Y", "v_Vel", "v_Length"]
         '''
         df = self.df[self.df["Frame_ID"] == tstep]
-        df = df.sample(frac=1).reset_index(drop=True)
+        # df = df.sample(frac=1).reset_index(drop=True)
 
-        # df = df.reset_index(drop=True)
+        df = df.reset_index(drop=True)
         min_v_id = df['Lane_ID'].min()
 
         # Reshape df["Local_X", "Local_Y"] to self.vehicle_world_position --> (self.num_env, self.num_vehicle, 2)
@@ -109,12 +170,15 @@ class NGParallelSim(ParallelTrafficSim):
             # nv.speed = row["v_Vel"]
             lane_id = row["Lane_ID"] - min_v_id
             v_length = row["v_Length"]
+            # position = np.sqrt(row["Local_X"]*row["Local_X"] + row["Local_Y"]*row["Local_Y"])
+            position = row["sim_position"]
+            velocity = row["v_Vel"]
             
             vid = self.idm_vehicle_id(idm_vehicle_id)
 
             if env_id or env_id == []:
-                self.vehicle_position[env_id, vid] = self.tensorize_value(row["Local_X"])
-                self.vehicle_speed[env_id, vid] = self.tensorize_value(row["v_Vel"])
+                self.vehicle_position[env_id, vid] = self.tensorize_value(position)
+                self.vehicle_speed[env_id, vid] = self.tensorize_value(velocity)
                 self.vehicle_accel_max[env_id, vid] = self.tensorize_value(nv.accel_max)
                 self.vehicle_accel_pref[env_id, vid] = self.tensorize_value(nv.accel_pref)
                 self.vehicle_target_speed[env_id, vid] = self.tensorize_value(nv.target_speed)
@@ -123,8 +187,8 @@ class NGParallelSim(ParallelTrafficSim):
                 self.vehicle_lane_id[env_id, vid] = self.tensorize_value(lane_id, dtype=th.int32)
                 self.vehicle_length[env_id, vid] = self.tensorize_value(v_length)
             else:
-                self.vehicle_position[:, vid] = self.tensorize_value(row["Local_X"])
-                self.vehicle_speed[:, vid] = self.tensorize_value(row["v_Vel"])
+                self.vehicle_position[:, vid] = self.tensorize_value(position)
+                self.vehicle_speed[:, vid] = self.tensorize_value(velocity)
                 self.vehicle_accel_max[:, vid] = self.tensorize_value(nv.accel_max)
                 self.vehicle_accel_pref[:, vid] = self.tensorize_value(nv.accel_pref)
                 self.vehicle_target_speed[:, vid] = self.tensorize_value(nv.target_speed)
@@ -148,8 +212,9 @@ class NGParallelSim(ParallelTrafficSim):
         tstep = int(data["Frame_ID"])
 
         self._set_simulation_state_from_df(tstep, env_id=env_id)
+        self.update_idm_world_info()
 
-    def getObservation(self):
+    def getObservation(self, shuffle_order=None):
 
         position_x = self.vehicle_world_position[:, :, 0]
         position_y = self.vehicle_world_position[:, :, 1]
@@ -162,12 +227,44 @@ class NGParallelSim(ParallelTrafficSim):
         time_pref = self.vehicle_time_pref[:, :]
         vehicle_length = self.vehicle_length[:, :]
 
-        obs_buf = th.cat([position_x, position_y, velocity_x, velocity_y, accel_max,
-                                    accel_pref, target_speed, min_space, time_pref, vehicle_length], dim=1)
+        data = [position_x, position_y, velocity_x, velocity_y, accel_max,
+                accel_pref, target_speed, min_space, time_pref, vehicle_length]
 
+        if shuffle_order is not None: 
+
+            for i, d in enumerate(data):
+                data[i] = d[:, shuffle_order]
+
+        obs_buf = th.cat(data, dim=1)
         
         return obs_buf.squeeze()
     
+    def forward(self, actions: th.Tensor, delta_time: float = None):
+        super().forward(actions=actions, delta_time=self.delta_time)
+
+    def set_state_and_forward(self, idx, shuffle=False):
+        ''' for noise model training purposes '''
+
+        rand_indices = None
+        
+        # generate random indices 
+        if shuffle:
+            rand_indices = th.randperm(self.num_vehicle)
+
+        # set initial state
+        self.set_state(idx, env_id=None)
+        
+        # record initial state
+        obs_t0 = self.getObservation(shuffle_order=rand_indices)
+
+        # forward idm step to next state
+        self.forward(None)
+
+        # record next state
+        obs_t1 = self.getObservation(shuffle_order=rand_indices)
+
+        return obs_t0, obs_t1
+
     def reset_vehicle_info(self):
 
         # vehicle info;
