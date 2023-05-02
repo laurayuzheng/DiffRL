@@ -276,7 +276,7 @@ class ParallelTrafficSim:
         idm_lane_id = self.vehicle_lane_id[:, idm_idx:].clone()
         idm_lane_id_A = idm_lane_id.unsqueeze(-1).unsqueeze(-1).expand((-1, -1, -1, 2)).to(dtype=th.int64)
         idm_lane_id_B = idm_lane_id.unsqueeze(-1).to(dtype=th.int64)
-
+        
         sel_idm_world_position = th.gather(idm_world_position, 2, idm_lane_id_A).squeeze(2)
         sel_idm_world_velocity = th.gather(idm_world_velocity, 2, idm_lane_id_A).squeeze(2)
         sel_idm_world_heading = th.gather(idm_world_heading, 2, idm_lane_id_B).squeeze(2)

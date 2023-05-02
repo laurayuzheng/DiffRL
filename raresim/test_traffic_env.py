@@ -14,6 +14,8 @@ import time
 import torch
 import random
 
+torch.set_printoptions(sci_mode=False)
+
 import envs
 from utils.common import *
 
@@ -48,14 +50,15 @@ seeding()
 # Testing the Simulation #
 ###########################
 
+start_idx = 5000
 t_start = time.time()
 
-sim = NGParallelSim(CSV_PATH, 0, True, device, delta_time=0.01)
+sim = NGParallelSim(CSV_PATH, 0, True, device, delta_time=0.1)
 
-for i in [1010,1015,1020]:
-    o0, o1 = sim.set_state_and_forward(i, shuffle=True)
-
-    print(o1-o0)
+for i in range(start_idx,start_idx+10):
+    o0, o1_hat, o1 = sim.set_state_and_forward(i, shuffle=True, random_rotate=False)
+    
+    print(o1 - o1_hat)
 
 t_end = time.time()
 
