@@ -6,21 +6,26 @@ import time
 import torch
 from torch.utils.data import Dataset
 
-from ngsim_env.onestep_simulation import NGOneStepSim
+from ngsim_env.simulation import NGParallelSim
 
-CSV_PATH = "./data/trajectories-0400-0415.csv"
+CSV_PATHS = ["./data/trajectories-0400-0415.csv",
+             "./data/trajectories-0500-0515.csv", 
+             "./data/trajectories-0515-0530.csv"]
 
 class NGSimDataset(Dataset):
-    def __init__(self, csv_path=CSV_PATH, device='cpu'):
-        self.sim = NGOneStepSim(csv_path, no_steering=True, device=device)
+    def __init__(self, csv_path=CSV_PATHS, device='cpu', max_vehicles=300):
+        self.sim = NGParallelSim(csv_path, 0, no_steering=True, 
+                                 device=device, delta_time=0.1, 
+                                 max_vehicles=max_vehicles)
 
     def __len__(self):
         return len(self.sim.df)
 
     def __getitem__(self, idx):
-        self.sim.forward(idx, 0.01)
-        return self.sim.getObservation()
 
+        obs0, obs1_idm, rand_indices, idx = self.sim.get_state_and_next_state(idx, shuffle=True)
+        return obs0, obs1_idm, rand_indices, idx
+    
 if __name__ == "__main__":
 
     test_dataset = NGSimDataset(device='cuda')

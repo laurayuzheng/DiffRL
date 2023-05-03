@@ -24,13 +24,14 @@ import argparse
 from ngsim_env.env import TrafficNGSimEnv
 from ngsim_env.simulation import NGParallelSim
 
-CSV_PATH = "./data/trajectories-0400-0415.csv"
+CSV_PATHS = ["./data/trajectories-0400-0415.csv",
+             "./data/trajectories-0500-0515.csv", 
+             "./data/trajectories-0515-0530.csv"]
 
 def set_seed(seed):
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
-
 
 '''python examples/test_traffic_env.py --num-envs 1 --render'''
 
@@ -50,45 +51,45 @@ seeding()
 # Testing the Simulation #
 ###########################
 
-start_idx = 5000
-t_start = time.time()
+# start_idx = 5000
+# t_start = time.time()
 
-sim = NGParallelSim(CSV_PATH, 0, True, device, delta_time=0.1)
+# sim = NGParallelSim(CSV_PATH, 0, True, device, delta_time=0.1)
 
-for i in range(start_idx,start_idx+10):
-    o0, o1_hat, o1 = sim.set_state_and_forward(i, shuffle=True, random_rotate=False)
+# for i in range(start_idx,start_idx+10):
+#     o0, o1_hat, o1 = sim.get_state_and_next_state(i, shuffle=True)
     
-    print(o1 - o1_hat)
+#     print(o1 - o1_hat)
 
-t_end = time.time()
+# t_end = time.time()
 
 
 ###########################
 # Testing the Environment #
 ###########################
 
-# env = TrafficNGSimEnv(CSV_PATH, 1000, render=args.render, device=device,
-#                       num_envs=args.num_envs, seed=0,
-#                       episode_length=1000, no_grad=True, no_steering=True)
+env = TrafficNGSimEnv(CSV_PATHS, 5000, render=args.render, device=device,
+                      num_envs=args.num_envs, seed=0,
+                      episode_length=1000, no_grad=True, no_steering=True)
         
 
-# obs = env.reset(idx=1000)
+obs = env.reset(idx=5000)
 
-# num_actions = env.num_actions
+num_actions = env.num_actions
 
-# t_start = time.time()
+t_start = time.time()
 
-# reward_episode = 0.
-# for i in range(900):
-#     actions = torch.zeros((args.num_envs, num_actions), device=device)
-#     # actions = torch.Tensor([0]).expand(args.num_envs, -1).to(device)
-#     obs, reward, _, _ = env.step(actions)
-#     reward_episode += reward
+reward_episode = 0.
+for i in range(900):
+    actions = torch.zeros((args.num_envs, num_actions), device=device)
+    # actions = torch.Tensor([0]).expand(args.num_envs, -1).to(device)
+    obs, reward, _, _ = env.step(actions)
+    reward_episode += reward
 
-# t_end = time.time()
+t_end = time.time()
 
 print("Total time: %f s", (t_end - t_start))
-print("Steps / second: ", 1500 / (t_end - t_start))
+print("Steps / second: ", 900 / (t_end - t_start))
 
 # print('fps = ', 1000 * args.num_envs / (t_end - t_start))
 # print('mean reward = ', reward_episode.mean().detach().cpu().item())

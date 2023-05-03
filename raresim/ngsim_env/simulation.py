@@ -23,7 +23,7 @@ FEET_TO_METERS_C = 0.30481
 
 class NGParallelSim(ParallelTrafficSim):
 
-    def __init__(self, csv_path, idx, no_steering: bool, device, delta_time=0.1):
+    def __init__(self, csv_paths, idx, no_steering: bool, device, delta_time=0.1, max_vehicles=300):
 
         self.num_env = 1 
         self.speed_limit = 29.0576 # 64 mph --> m/s 
@@ -31,9 +31,10 @@ class NGParallelSim(ParallelTrafficSim):
         self.device = device
         self.idx = idx
         self.delta_time = delta_time
+        self.max_vehicles = max_vehicles
 
         # Get info from csv file
-        self.csv_path = csv_path
+        self.csv_path = csv_paths
         self.process_csv()
 
         data = self.df.iloc[idx]
@@ -102,9 +103,15 @@ class NGParallelSim(ParallelTrafficSim):
 
     def process_csv(self):
 
-        print("loading ngsim dataset from csv: %s" % (self.csv_path))
+        print("loading ngsim dataset from csvs: %s" % (self.csv_path))
 
-        df = pd.read_csv(self.csv_path, header=0, sep=',')
+        df_list = []
+        for csv in self.csv_path:
+            df = pd.read_csv(csv, header=0, sep=',')
+            df_list.append(df)
+        
+        df = pd.concat(df_list)
+
         df = df[df.v_Class != 1]
         df = df[df.Lane_ID <= 5]
 
@@ -121,14 +128,14 @@ class NGParallelSim(ParallelTrafficSim):
 
         print("dataset total time: ", total_time)
 
-        df = df[["Lane_ID", "Frame_ID", "Local_X", "Local_Y", "v_Vel", "v_Length",]]
+        df = df[["Global_Time", "Lane_ID", "Frame_ID", "Local_X", "Local_Y", "v_Vel", "v_Length",]]
 
         df["Local_X"] = df["Local_X"] * FEET_TO_METERS_C # convert to meters
         df["Local_Y"] = df["Local_Y"] * FEET_TO_METERS_C # convert to meters
         df["v_Vel"] = df["v_Vel"] * FEET_TO_METERS_C # convert to meters
         df["v_Length"] = df["v_Length"] * FEET_TO_METERS_C # convert to meters
 
-        df = df.sort_values(["Frame_ID", "Lane_ID", "Local_X"], ascending=True)
+        df = df.sort_values(["Global_Time", "Frame_ID", "Lane_ID", "Local_X"], ascending=True)
     
         df['theta_to_x'] = -1.5708 # the rotation in radians to align NGSim data with x axis 
         v = NGParallelSim.rotate_data_vectorized(df[['Local_X', 'Local_Y']].to_numpy(), df['theta_to_x'].to_numpy())
@@ -252,30 +259,81 @@ class NGParallelSim(ParallelTrafficSim):
                 accel_pref, target_speed, min_space, time_pref, vehicle_length]
 
         if shuffle_order is not None: 
+            
+            shuffle_order = list(shuffle_order.detach().cpu().numpy())
+            shuffle_order_size = len(shuffle_order)
+            position_x_size = len(position_x[0])
+
+            if max(shuffle_order) >= position_x_size:
+                
+                max_index = max(shuffle_order)
+                # while shuffle_order_size > position_x_size:
+                while max_index >= position_x_size:
+                    shuffle_order.remove(max_index)
+                    max_index = max(shuffle_order)
+
+            elif shuffle_order_size < position_x_size:
+        
+                # remove new data from obs since it wasn't present originally
+                for i, d in enumerate(data): 
+                    data[i] = d[:, :shuffle_order_size]
 
             for i, d in enumerate(data):
                 data[i] = d[:, shuffle_order]
+
+        # zero-pad observation to have a consistent size across all data
+        for i, d in enumerate(data):
+            data[i] = th.nn.functional.pad(input=d, pad=(0, self.max_vehicles - d.shape[-1], 0, 0), mode='constant', value=0)
 
         obs_buf = th.cat(data, dim=1)
         
         return obs_buf.squeeze()
     
-    def forward(self, actions: th.Tensor, delta_time: float = None):
-        super().forward(actions=actions, delta_time=self.delta_time)
+    def forward(self, noise: th.Tensor = None):
+        '''
+        Take a forward step for every environment.
+        '''
 
-    def set_state_and_forward(self, idx, shuffle=False, random_rotate=False):
+        # 1. update delta values;
+        self.update_delta()
+
+        # 2. call IDM function;
+        accel_max = self.vehicle_accel_max[:, self.num_auto_vehicle:].clone()
+        accel_pref = self.vehicle_accel_pref[:, self.num_auto_vehicle:].clone()
+        speed = self.vehicle_speed[:, self.num_auto_vehicle:].clone()
+        target_speed = self.vehicle_target_speed[:, self.num_auto_vehicle:].clone()
+        pos_delta = self.vehicle_pos_delta[:, self.num_auto_vehicle:].clone()
+        speed_delta = self.vehicle_speed_delta[:, self.num_auto_vehicle:].clone()
+        min_space = self.vehicle_min_space[:, self.num_auto_vehicle:].clone()
+        time_pref = self.vehicle_time_pref[:, self.num_auto_vehicle:].clone()
+
+        acc = IDMLayer.apply(accel_max, accel_pref, speed, target_speed, pos_delta, speed_delta, min_space, time_pref, self.delta_time)
+
+        if noise is not None:
+            acc = acc.clone() + noise[:len(acc)]
+
+        # 3. update pos and vel of vehicles;
+        self.vehicle_position[:, self.num_auto_vehicle:] = (self.vehicle_position.clone() + self.vehicle_speed.clone() * self.delta_time)[:, self.num_auto_vehicle:]
+        self.vehicle_speed[:, self.num_auto_vehicle:] = (self.vehicle_speed[:, self.num_auto_vehicle:].clone() + acc * self.delta_time)
+
+        # 6. move idm vehicles from lane to lane;
+        self.update_idm_vehicle_lane_membership()
+
+        self.update_info()
+
+    def get_state_and_next_state(self, idx, shuffle=False):
         ''' for noise model training purposes '''
 
         rand_indices = None
-        theta = None 
+        # theta = None 
 
         # generate random indices 
         if shuffle:
             rand_indices = th.randperm(self.num_vehicle)
 
-        if random_rotate:
-            theta = th.rand(1).item() * 2 * th.pi
-            self.rotate_trajectory(theta)
+        # if random_rotate:
+        #     theta = th.rand(1).item() * 2 * th.pi
+        #     self.rotate_trajectory(theta)
 
         # get actual next timestep
         self.set_state(idx, env_id=None, next_t=True)
@@ -289,16 +347,42 @@ class NGParallelSim(ParallelTrafficSim):
         # record initial state
         obs_t0 = self.getObservation(shuffle_order=rand_indices)
 
-        # forward idm step to next state
-        self.forward(None)
+        # if random_rotate: # put the trajectory back lol
+        #     self.revert_trajectory()
 
-        # record next state
-        obs_t1_hat = self.getObservation(shuffle_order=rand_indices)
+        rand_indices = th.nn.functional.pad(input=rand_indices, 
+                                            pad=(0, self.max_vehicles-rand_indices.shape[-1]), 
+                                            mode='constant', value=0)
 
-        if random_rotate: # put the trajectory back lol
-            self.revert_trajectory()
+        return obs_t0, obs_t1, rand_indices, idx
 
-        return obs_t0, obs_t1_hat, obs_t1
+    def add_noise_and_forward(self, acc_noises, idxs, rand_indices=None):
+        ''' for noise model training purposes.
+            should be called after get_state_and_next_state. '''
+
+        tensors = [] 
+
+        for i in range(0, len(acc_noises)):
+            
+            # print("sim.py: ", acc_noises.shape)
+            # print("sim.py: ", idxs.shape)
+
+            # set initial state 
+            self.set_state(idxs[i].item(), env_id=None)
+
+            # forward idm step to next state
+            self.forward(noise=acc_noises[i])
+
+            # record next state
+            obs_t1_hat = self.getObservation(shuffle_order=rand_indices[i])
+
+            # print("sim.py: ", obs_t1_hat.shape)
+
+            tensors.append(obs_t1_hat)
+
+        obs_t1_hats = th.vstack(tensors)
+
+        return obs_t1_hats
 
     def reset_vehicle_info(self):
 

@@ -285,7 +285,6 @@ class ParallelTrafficSim:
         self.vehicle_world_velocity[:, idm_idx:] = sel_idm_world_velocity
         self.vehicle_world_heading[:, idm_idx:] = sel_idm_world_heading
         
-
         return
 
     def update_auto_world_info(self, env_id):
