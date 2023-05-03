@@ -26,18 +26,20 @@ class MLP(nn.Module):
 
         super(MLP, self).__init__()
 
-        self.fc1 = nn.Linear(num_vehicles*10, 64)
-        self.fc2 = nn.Linear(64, 32)
-        self.fc3 = nn.Linear(32, num_vehicles)
+        self.fc1 = nn.Linear(num_vehicles*10, 500)
+        self.fc2 = nn.Linear(500, 200)
+        self.fc3 = nn.Linear(200, 64)
+        self.fc4 = nn.Linear(64, num_vehicles)
 
     def forward(self, x):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
-        return self.fc3(x)
+        x = F.relu(self.fc3(x))
+        return self.fc4(x)
 
 class NoiseModel:
 
-    def __init__(self, save_path="./weights/", lr=0.001, num_epochs=100, load_weights=None, max_vehicles=300, batch_size=100):
+    def __init__(self, save_path="./weights/", lr=0.01, num_epochs=100, load_weights=None, max_vehicles=300, batch_size=100):
         self.save_path = save_path
 
         self.net = MLP(max_vehicles)
@@ -72,9 +74,8 @@ class NoiseModel:
         for param in self.net.parameters():
             param.requires_grad = True
 
-        loss = 0 
         dataloader = DataLoader(self.dataset, batch_size=self.batch_size, 
-                                pin_memory=False)
+                                pin_memory=False, shuffle=True)
                                 # pin_memory=(self.device == "cuda"))
         
         total_updates = self.total_epochs * len(dataloader)
@@ -82,6 +83,8 @@ class NoiseModel:
 
         for epoch in range(self.curr_epoch, self.total_epochs):
             
+            loss = 0.0
+
             with tqdm.tqdm(dataloader, unit="batch") as tepoch:
 
                 for b_idx, (obs0, obs1, rand_indices, idxs) in enumerate(tepoch):
@@ -108,8 +111,6 @@ class NoiseModel:
 
                         self.optimizer.step()
 
-                        self.writer.add_scalar("Loss/train", loss, update_idx)
-
                         update_idx += 1
 
                     loss += float(_loss.item()) 
@@ -118,6 +119,13 @@ class NoiseModel:
                     # self.scheduler.step_update(num_updates=total_updates, metric=loss/(b_idx+1))
 
                     tepoch.set_postfix(loss=_loss.item())
+
+                self.writer.add_scalar("Loss/train", loss/len(dataloader), epoch)
+
+                if epoch+1 % 5 == 0: # save every 5 epochs
+                    self.save_model(epoch=epoch, loss=loss)
+
+                
             
             # self.scheduler.step(epoch+1, loss/len(dataloader))
         
@@ -136,5 +144,5 @@ class NoiseModel:
 
 if __name__ == "__main__":
 
-    noise_model = NoiseModel(max_vehicles=100, batch_size=100)
+    noise_model = NoiseModel(max_vehicles=500, batch_size=100)
     noise_model.train_model()

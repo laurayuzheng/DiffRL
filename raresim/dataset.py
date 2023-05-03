@@ -9,8 +9,9 @@ from torch.utils.data import Dataset
 from ngsim_env.simulation import NGParallelSim
 
 CSV_PATHS = ["./data/trajectories-0400-0415.csv",
-             "./data/trajectories-0500-0515.csv", 
-             "./data/trajectories-0515-0530.csv"]
+            #  "./data/trajectories-0500-0515.csv", 
+            #  "./data/trajectories-0515-0530.csv"
+             ]
 
 class NGSimDataset(Dataset):
     def __init__(self, csv_path=CSV_PATHS, device='cpu', max_vehicles=300, num_envs=1):
@@ -20,7 +21,7 @@ class NGSimDataset(Dataset):
                                  num_env=num_envs)
 
     def __len__(self):
-        return len(self.sim.df)
+        return len(self.sim.unique_frame_ids)
 
     def __getitem__(self, idx):
 

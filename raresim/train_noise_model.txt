@@ -1,0 +1,11 @@
+Using cached kernels
+loading ngsim dataset from csvs: ['./data/trajectories-0400-0415.csv', './data/trajectories-0500-0515.csv', './data/trajectories-0515-0530.csv']
+dataset total time:  5218.900000000001
+data loading finished. here's a preview: 
+         Global_Time  Lane_ID  ...  sim_position_x  sim_position_y
+11027  1113433135300        3  ...       23.033608      522.813247
+11028  1113433135400        3  ...       23.338723      522.508131
+11029  1113433135500        3  ...       23.643228      522.203625
+
+[3 rows x 9 columns]
+  0%|          | 0/88 [00:00<?, ?batch/s]

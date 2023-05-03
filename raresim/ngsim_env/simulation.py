@@ -146,6 +146,8 @@ class NGParallelSim(ParallelTrafficSim):
         df = df.drop(columns=["theta_to_x"])
 
         self.df = df
+        column_values = df[['Frame_ID']].values
+        self.unique_frame_ids = np.unique(column_values)
 
         print("data loading finished. here's a preview: ")
         print(self.df.head(3))
@@ -234,11 +236,13 @@ class NGParallelSim(ParallelTrafficSim):
         ''' Load simulation state based on row in dataframe. '''
         self.idx = idx 
 
-        data = self.df.iloc[idx]
-        tstep = int(data["Frame_ID"])
+        # data = self.df.iloc[idx]
+        # tstep = int(data["Frame_ID"])
 
-        if next_t: 
-            tstep += 1
+        # if next_t: 
+        #     tstep += 1
+        
+        tstep = self.unique_frame_ids[idx]
 
         self._set_simulation_state_from_df(tstep, env_id=env_id)
 
@@ -310,7 +314,8 @@ class NGParallelSim(ParallelTrafficSim):
         acc = IDMLayer.apply(accel_max, accel_pref, speed, target_speed, pos_delta, speed_delta, min_space, time_pref, self.delta_time)
 
         if noise is not None:
-            acc = acc.clone() + noise[:acc.shape[-1]]
+            min_size = min(acc.shape[-1], noise.shape[-1])
+            acc = acc.clone()[:min_size] + noise[:min_size]
 
         # 3. update pos and vel of vehicles;
         self.vehicle_position[:, self.num_auto_vehicle:] = (self.vehicle_position.clone() + self.vehicle_speed.clone() * self.delta_time)[:, self.num_auto_vehicle:]
