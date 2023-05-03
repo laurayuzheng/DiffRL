@@ -23,9 +23,9 @@ FEET_TO_METERS_C = 0.30481
 
 class NGParallelSim(ParallelTrafficSim):
 
-    def __init__(self, csv_paths, idx, no_steering: bool, device, delta_time=0.1, max_vehicles=300):
+    def __init__(self, csv_paths, idx, no_steering: bool, device, delta_time=0.1, max_vehicles=300, num_env=1):
 
-        self.num_env = 1 
+        self.num_env = num_env
         self.speed_limit = 29.0576 # 64 mph --> m/s 
         self.no_steering = no_steering
         self.device = device
@@ -310,7 +310,7 @@ class NGParallelSim(ParallelTrafficSim):
         acc = IDMLayer.apply(accel_max, accel_pref, speed, target_speed, pos_delta, speed_delta, min_space, time_pref, self.delta_time)
 
         if noise is not None:
-            acc = acc.clone() + noise[:len(acc)]
+            acc = acc.clone() + noise[:acc.shape[-1]]
 
         # 3. update pos and vel of vehicles;
         self.vehicle_position[:, self.num_auto_vehicle:] = (self.vehicle_position.clone() + self.vehicle_speed.clone() * self.delta_time)[:, self.num_auto_vehicle:]
@@ -354,6 +354,7 @@ class NGParallelSim(ParallelTrafficSim):
                                             pad=(0, self.max_vehicles-rand_indices.shape[-1]), 
                                             mode='constant', value=0)
 
+
         return obs_t0, obs_t1, rand_indices, idx
 
     def add_noise_and_forward(self, acc_noises, idxs, rand_indices=None):
@@ -364,9 +365,6 @@ class NGParallelSim(ParallelTrafficSim):
 
         for i in range(0, len(acc_noises)):
             
-            # print("sim.py: ", acc_noises.shape)
-            # print("sim.py: ", idxs.shape)
-
             # set initial state 
             self.set_state(idxs[i].item(), env_id=None)
 
@@ -376,9 +374,7 @@ class NGParallelSim(ParallelTrafficSim):
             # record next state
             obs_t1_hat = self.getObservation(shuffle_order=rand_indices[i])
 
-            # print("sim.py: ", obs_t1_hat.shape)
-
-            tensors.append(obs_t1_hat)
+            tensors.append(obs_t1_hat.unsqueeze(0))
 
         obs_t1_hats = th.vstack(tensors)
 

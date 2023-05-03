@@ -13,10 +13,11 @@ CSV_PATHS = ["./data/trajectories-0400-0415.csv",
              "./data/trajectories-0515-0530.csv"]
 
 class NGSimDataset(Dataset):
-    def __init__(self, csv_path=CSV_PATHS, device='cpu', max_vehicles=300):
+    def __init__(self, csv_path=CSV_PATHS, device='cpu', max_vehicles=300, num_envs=1):
         self.sim = NGParallelSim(csv_path, 0, no_steering=True, 
                                  device=device, delta_time=0.1, 
-                                 max_vehicles=max_vehicles)
+                                 max_vehicles=max_vehicles, 
+                                 num_env=num_envs)
 
     def __len__(self):
         return len(self.sim.df)

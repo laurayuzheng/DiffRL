@@ -37,7 +37,7 @@ class MLP(nn.Module):
 
 class NoiseModel:
 
-    def __init__(self, save_path="./weights/", lr=0.001, num_epochs=100, load_weights=None, max_vehicles=300):
+    def __init__(self, save_path="./weights/", lr=0.001, num_epochs=100, load_weights=None, max_vehicles=300, batch_size=100):
         self.save_path = save_path
 
         self.net = MLP(max_vehicles)
@@ -46,6 +46,7 @@ class NoiseModel:
         self.criterion = nn.MSELoss()
         self.scheduler = optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=0.9)
         self.writer = SummaryWriter(log_dir="./runs", comment="noise_model")
+        self.batch_size = batch_size
 
         self.curr_epoch = 0
         self.curr_loss = 0
@@ -61,7 +62,7 @@ class NoiseModel:
             self.curr_epoch = checkpoint['epoch']
             self.curr_loss = checkpoint['loss']
         
-        self.dataset = NGSimDataset(CSV_PATHS, device=self.device, max_vehicles=max_vehicles)
+        self.dataset = NGSimDataset(CSV_PATHS, device=self.device, max_vehicles=max_vehicles, num_envs=1)
         self.net.to(self.device)
 
     def train_model(self):
@@ -72,7 +73,7 @@ class NoiseModel:
             param.requires_grad = True
 
         loss = 0 
-        dataloader = DataLoader(self.dataset, batch_size=5000, 
+        dataloader = DataLoader(self.dataset, batch_size=self.batch_size, 
                                 pin_memory=False)
                                 # pin_memory=(self.device == "cuda"))
         
@@ -102,7 +103,7 @@ class NoiseModel:
                         
                         obs_t1_hats = self.dataset.sim.add_noise_and_forward(noise,idxs,rand_indices=rand_indices)
 
-                        _loss = self.criterion(obs_t1_hats, obs1)
+                        _loss = self.criterion(obs_t1_hats.flatten(), obs1.flatten())
                         _loss.backward() 
 
                         self.optimizer.step()
@@ -135,5 +136,5 @@ class NoiseModel:
 
 if __name__ == "__main__":
 
-    noise_model = NoiseModel(max_vehicles=100)
+    noise_model = NoiseModel(max_vehicles=100, batch_size=100)
     noise_model.train_model()
