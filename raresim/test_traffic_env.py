@@ -23,10 +23,13 @@ import argparse
 
 from ngsim_env.env import TrafficNGSimEnv
 from ngsim_env.simulation import NGParallelSim
+from simple_env.simulator import WorldSim
+from envs.traffic.pace_car.env import TrafficPaceCarEnv
 
 CSV_PATHS = ["./data/trajectories-0400-0415.csv",
-             "./data/trajectories-0500-0515.csv", 
-             "./data/trajectories-0515-0530.csv"]
+            #  "./data/trajectories-0500-0515.csv", 
+            #  "./data/trajectories-0515-0530.csv"
+             ]
 
 def set_seed(seed):
     torch.manual_seed(seed)
@@ -54,12 +57,11 @@ seeding()
 # start_idx = 5000
 # t_start = time.time()
 
-# sim = NGParallelSim(CSV_PATH, 0, True, device, delta_time=0.1)
+# # sim = NGParallelSim(CSV_PATH, 0, True, device, delta_time=0.1)
+# sim = WorldSim(100, 50)
 
-# for i in range(start_idx,start_idx+10):
-#     o0, o1_hat, o1 = sim.get_state_and_next_state(i, shuffle=True)
-    
-#     print(o1 - o1_hat)
+# for i in range(1000):
+#     sim.forward()
 
 # t_end = time.time()
 
@@ -72,8 +74,10 @@ env = TrafficNGSimEnv(CSV_PATHS, 5000, render=args.render, device=device,
                       num_envs=args.num_envs, seed=0,
                       episode_length=1000, no_grad=True, no_steering=True)
         
+# env = TrafficPaceCarEnv(device="cpu", num_envs=100, num_auto_vehicle=0, num_idm_vehicle=50, num_lane=5)
 
-obs = env.reset(idx=5000)
+# obs = env.reset(idx=5000)
+obs = env.reset(idx=100)
 
 num_actions = env.num_actions
 

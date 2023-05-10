@@ -9,3 +9,9 @@ externals/traffic/dist/
 *.gif
 outputs/
 raresim/data/*
+
+*.txt 
+/*/*.txt 
+
+/*/runs_*
+raresim/weights/

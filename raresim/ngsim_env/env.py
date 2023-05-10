@@ -11,7 +11,13 @@ import numpy as np
 np.set_printoptions(precision=5, linewidth=256, suppress=True)
 
 from ngsim_env.simulation import NGParallelSim
+from dataset import NGSimDatasetOffline
 from highway_env.envs.common.graphics import EnvViewer
+
+CSV_PATHS_TRAIN = ["./data/train_i80.csv",
+            #  "./data/trajectories-0500-0515.csv", 
+            #  "./data/trajectories-0515-0530.csv"
+             ]
 
 class TrafficNGSimEnv(DFlexEnv):
 
@@ -56,7 +62,9 @@ class TrafficNGSimEnv(DFlexEnv):
 
     def init_sim(self, idx):
         
-        self.sim = NGParallelSim(self.csv_path, idx, self.no_steering, self.device, delta_time=self.dt)
+        self.dataset = NGSimDatasetOffline("./data/npy_unshuffled", CSV_PATHS_TRAIN, max_vehicles=200)
+        # self.sim = NGParallelSim(self.csv_path, idx, self.no_steering, self.device, delta_time=self.dt)
+        self.sim = self.dataset.sim
         
     def render(self, mode = 'human'):
         # render only first env;
@@ -98,7 +106,7 @@ class TrafficNGSimEnv(DFlexEnv):
             
             self.actions = actions
             
-            self.sim.forward(actions, self.dt)
+            self.sim.forward(actions)
             self.sim_time += self.dt
             
         self.reset_buf = torch.zeros_like(self.reset_buf)
@@ -106,8 +114,14 @@ class TrafficNGSimEnv(DFlexEnv):
         self.progress_buf += 1
         self.num_frames += 1
 
+    
         self.calculateObservations()
         self.calculateReward()
+
+        # print(self.obs_buf[0])
+        # print(self.sim.vehicle_lane_id)
+
+        self.sim.getObservation()
 
         if self.no_grad == False:
             self.obs_buf_before_reset = self.obs_buf.clone()

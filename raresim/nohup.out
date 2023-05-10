@@ -1,0 +1,18 @@
+Using cached kernels
+loading ngsim dataset from csvs: ['./data/train_i80_400.csv']
+data loading finished. here's a preview: 
+   Lane_ID  Frame_ID    Local_X  ...  v_Length  sim_position_x  sim_position_y
+0        4      5263  13.251615  ...  4.541669      382.510349      147.246672
+1        3      6184   8.886431  ...  5.120808      434.965728       94.791101
+2        1      5487   1.011664  ...  4.389264      105.129636      424.628404
+
+[3 rows x 8 columns]
+loading ngsim dataset from csvs: ['./data/test_i80_400.csv']
+data loading finished. here's a preview: 
+   Lane_ID  Frame_ID   Local_X  ...  v_Length  sim_position_x  sim_position_y
+0        3         4  8.268276  ...  7.559288       23.033608      506.724733
+1        3         6  8.268276  ...  7.559288       23.643228      506.115111
+2        2        12  5.146412  ...  4.358783       14.695847      515.062525
+
+[3 rows x 8 columns]
+  0%|          | 0/88 [00:00<?, ?batch/s]Epoch 0:   0%|          | 0/88 [00:06<?, ?batch/s]Epoch 0:   0%|          | 0/88 [00:11<?, ?batch/s, loss=1.56e+4]Epoch 0:   1%|          | 1/88 [00:11<16:29, 11.37s/batch, loss=1.56e+4]Epoch 0:   1%|          | 1/88 [00:18<16:29, 11.37s/batch, loss=1.56e+4]Epoch 0:   1%|          | 1/88 [00:22<16:29, 11.37s/batch, loss=1.62e+4]Epoch 0:   2%|▏         | 2/88 [00:22<16:05, 11.22s/batch, loss=1.62e+4]Epoch 0:   2%|▏         | 2/88 [00:28<16:05, 11.22s/batch, loss=1.62e+4]Epoch 0:   2%|▏         | 2/88 [00:32<16:05, 11.22s/batch, loss=1.6e+4] Epoch 0:   3%|▎         | 3/88 [00:32<14:56, 10.55s/batch, loss=1.6e+4]Epoch 0:   3%|▎         | 3/88 [00:38<14:56, 10.55s/batch, loss=1.6e+4]Epoch 0:   3%|▎         | 3/88 [00:42<14:56, 10.55s/batch, loss=1.58e+4]Epoch 0:   5%|▍         | 4/88 [00:42<14:42, 10.51s/batch, loss=1.58e+4]Epoch 0:   5%|▍         | 4/88 [00:48<14:42, 10.51s/batch, loss=1.58e+4]Epoch 0:   5%|▍         | 4/88 [00:53<14:42, 10.51s/batch, loss=1.55e+4]Epoch 0:   6%|▌         | 5/88 [00:53<14:30, 10.49s/batch, loss=1.55e+4]Epoch 0:   6%|▌         | 5/88 [00:59<14:30, 10.49s/batch, loss=1.55e+4]Epoch 0:   6%|▌         | 5/88 [01:03<14:30, 10.49s/batch, loss=1.63e+4]Epoch 0:   7%|▋         | 6/88 [01:03<14:18, 10.46s/batch, loss=1.63e+4]

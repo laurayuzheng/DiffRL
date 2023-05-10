@@ -17,6 +17,7 @@ from highway_env.road.regulation import RegulatedRoad as hwRoad
 import numpy as np
 import torch as th
 import pandas as pd
+from torch_geometric.data import Data
 
 FEET_TO_METERS_C = 0.30481
 # FEET_TO_METERS_C = 1
@@ -35,7 +36,8 @@ class NGParallelSim(ParallelTrafficSim):
 
         # Get info from csv file
         self.csv_path = csv_paths
-        self.process_csv()
+        self.process_csv_simple()
+        # self.process_csv()
 
         data = self.df.iloc[idx]
         tstep = data["Frame_ID"]
@@ -100,14 +102,37 @@ class NGParallelSim(ParallelTrafficSim):
         
         return v 
     
-
-    def process_csv(self):
+    def process_csv_simple(self):
 
         print("loading ngsim dataset from csvs: %s" % (self.csv_path))
 
         df_list = []
         for csv in self.csv_path:
             df = pd.read_csv(csv, header=0, sep=',')
+            df_list.append(df)
+        
+        df = pd.concat(df_list)
+
+        df = df.sort_values(["Frame_ID", "Lane_ID", "Local_X"], ascending=True)
+
+        self.df = df
+        column_values = df[['Frame_ID']].values
+        self.unique_frame_ids = np.unique(column_values)
+
+        print("data loading finished. here's a preview: ")
+        print(self.df.head(3))
+
+    def process_csv(self):
+
+        print("loading ngsim dataset from csvs: %s" % (self.csv_path))
+
+        df_list = []
+        frame_id_counter = 0
+
+        for csv in self.csv_path:
+            df = pd.read_csv(csv, header=0, sep=',')
+            df["Frame_ID"] = df["Frame_ID"] + frame_id_counter
+            frame_id_counter = df["Frame_ID"].max()
             df_list.append(df)
         
         df = pd.concat(df_list)
@@ -128,14 +153,14 @@ class NGParallelSim(ParallelTrafficSim):
 
         print("dataset total time: ", total_time)
 
-        df = df[["Global_Time", "Lane_ID", "Frame_ID", "Local_X", "Local_Y", "v_Vel", "v_Length",]]
+        df = df[["Lane_ID", "Frame_ID", "Local_X", "Local_Y", "v_Vel", "v_Length",]]
 
         df["Local_X"] = df["Local_X"] * FEET_TO_METERS_C # convert to meters
         df["Local_Y"] = df["Local_Y"] * FEET_TO_METERS_C # convert to meters
         df["v_Vel"] = df["v_Vel"] * FEET_TO_METERS_C # convert to meters
         df["v_Length"] = df["v_Length"] * FEET_TO_METERS_C # convert to meters
 
-        df = df.sort_values(["Global_Time", "Frame_ID", "Lane_ID", "Local_X"], ascending=True)
+        df = df.sort_values(["Frame_ID", "Lane_ID", "Local_X"], ascending=True)
     
         df['theta_to_x'] = -1.5708 # the rotation in radians to align NGSim data with x axis 
         v = NGParallelSim.rotate_data_vectorized(df[['Local_X', 'Local_Y']].to_numpy(), df['theta_to_x'].to_numpy())
@@ -148,6 +173,12 @@ class NGParallelSim(ParallelTrafficSim):
         self.df = df
         column_values = df[['Frame_ID']].values
         self.unique_frame_ids = np.unique(column_values)
+
+        train_df = df.sample(frac=0.8,random_state=200)
+        test_df = df.drop(train_df.index)
+
+        train_df.to_csv("data/train_i80_400.csv", encoding='utf-8', index=False)
+        test_df.to_csv("data/test_i80_400.csv", encoding='utf-8', index=False)
 
         print("data loading finished. here's a preview: ")
         print(self.df.head(3))
@@ -176,7 +207,12 @@ class NGParallelSim(ParallelTrafficSim):
         df = self.df[self.df["Frame_ID"] == tstep]
         # df = df.sample(frac=1).reset_index(drop=True)
 
+        f = lambda x,y: np.sqrt(x**2 + y**2)
+
         df = df.reset_index(drop=True)
+        df["temp"] = np.sqrt(df["sim_position_x"] ** 2 + df["sim_position_y"] ** 2)
+        df = df.sort_values(['Lane_ID', 'temp']).drop('temp', axis=1) # order the same as the simulator
+
         # min_v_id = self.df['Lane_ID'].min()
 
         # Reshape df["Local_X", "Local_Y"] to self.vehicle_world_position --> (self.num_env, self.num_vehicle, 2)
@@ -234,30 +270,121 @@ class NGParallelSim(ParallelTrafficSim):
 
     def set_state(self, idx, env_id=[], next_t=False):
         ''' Load simulation state based on row in dataframe. '''
+        
         self.idx = idx 
 
         # data = self.df.iloc[idx]
         # tstep = int(data["Frame_ID"])
-
-        # if next_t: 
-        #     tstep += 1
         
-        tstep = self.unique_frame_ids[idx]
+        tstep0 = tstep = self.unique_frame_ids[idx]
+        tdiff = 1 if next_t else 0
+
+        if next_t: 
+            idx += 1
+            tstep1 = tstep = self.unique_frame_ids[idx]
+            tdiff = tstep1 - tstep0
+        
+        # tstep = self.unique_frame_ids[idx]
 
         self._set_simulation_state_from_df(tstep, env_id=env_id)
 
-    def getObservation(self, shuffle_order=None):
+        return tdiff
 
-        position_x = self.vehicle_world_position[:, :, 0]
-        position_y = self.vehicle_world_position[:, :, 1]
-        velocity_x = self.vehicle_world_velocity[:, :, 0]
-        velocity_y = self.vehicle_world_velocity[:, :, 1]
-        accel_max = self.vehicle_accel_max[:, :]
-        accel_pref = self.vehicle_accel_pref[:, :]
-        target_speed = self.vehicle_target_speed[:, :]
-        min_space = self.vehicle_min_space[:, :]
-        time_pref = self.vehicle_time_pref[:, :]
-        vehicle_length = self.vehicle_length[:, :]
+    def getObservationGraph(self):
+
+        # class MyData(Data):
+        #     def __cat_dim__(self, key, value, *args, **kwargs):
+        #         if key == 'x':
+        #             return None
+        #         return super().__cat_dim__(key, value, *args, **kwargs)
+            
+        vehicle_lane_id = self.vehicle_lane_id.clone()
+        vehicle_position = self.vehicle_position.clone()
+        vehicle_speed = self.vehicle_speed.clone()
+
+        # (num env, num vehicle, num lane)
+        lane_id_tensor = th.arange(0, self.num_lane, dtype=th.int32, device=self.device)
+        lane_id_tensor = lane_id_tensor.unsqueeze(0).unsqueeze(0).expand((self.num_env, self.num_vehicle, self.num_lane))
+        vehicle_lane_id_tensor = vehicle_lane_id.unsqueeze(-1).expand((self.num_env, self.num_vehicle, self.num_lane))
+        vehicle_lane_id_tensor = vehicle_lane_id_tensor - lane_id_tensor
+        vehicle_lane_membership_tensor = vehicle_lane_id_tensor == 0
+
+        # (num_env, num lane, num vehicle)
+        lane_vehicle_membership_tensor = vehicle_lane_membership_tensor.transpose(1, 2)
+        lane_vehicle_position_tensor = vehicle_position.unsqueeze(1).expand((self.num_env, self.num_lane, self.num_vehicle))
+        # inf_tensor = self.lane_length.unsqueeze(0).unsqueeze(-1).expand((self.num_env, self.num_lane, self.num_vehicle))
+        inf_tensor = th.zeros((self.num_env, self.num_lane, self.num_vehicle))
+        lane_vehicle_position_tensor = th.where(lane_vehicle_membership_tensor,
+                                                    lane_vehicle_position_tensor,
+                                                    inf_tensor)
+        
+        lane_vehicle_speed_tensor = vehicle_speed.unsqueeze(1).expand((self.num_env, self.num_lane, self.num_vehicle))
+        lane_vehicle_speed_tensor = th.where(lane_vehicle_membership_tensor,
+                                                    lane_vehicle_speed_tensor,
+                                                    inf_tensor)
+
+        start_nodes = th.nonzero(lane_vehicle_membership_tensor)
+
+        start_nodes = start_nodes[:,1:].transpose(0,1) #.flip(1)
+
+        edges = []
+        lane_node_list = [[] for _ in range(self.num_lane)] 
+
+        for i in range(start_nodes.shape[1]):
+            lane_node_list[start_nodes[0][i]].append(int(start_nodes[1][i])+1)
+
+        for i in range(len(lane_node_list)):
+            for j in range(len(lane_node_list[i])):
+                if j == len(lane_node_list[i]) - 1:
+                    edges.append([0, lane_node_list[i][j]])
+                else:
+                    edges.append([lane_node_list[i][j+1], lane_node_list[i][j]])
+        
+        edge_index = th.tensor(edges, dtype=th.long).transpose(0,1) # edges for graph data done
+
+        # now build the data tensor
+        nv = MicroVehicle.default_micro_vehicle(self.speed_limit) 
+
+        position_x = self.vehicle_world_position[:, :, 0] / 1e6 # max lane length
+        position_y = self.vehicle_world_position[:, :, 1] / (5 * 5) # width * num lanes
+        velocity_x = self.vehicle_world_velocity[:, :, 0] / (self.speed_limit * 2)
+        velocity_y = self.vehicle_world_velocity[:, :, 1] / (self.speed_limit * 2)
+        accel_max = self.vehicle_accel_max[:, :] / (nv.accel_max*2)
+        accel_pref = self.vehicle_accel_pref[:, :] / (nv.accel_pref*2)
+        target_speed = self.vehicle_target_speed[:, :] / (nv.target_speed*2)
+        min_space = self.vehicle_min_space[:, :] / (nv.min_space*2)
+        time_pref = self.vehicle_time_pref[:, :] / (nv.time_pref*2)
+        vehicle_length = self.vehicle_length[:, :] / (nv.length*2)
+
+        data = [position_x, position_y, velocity_x, velocity_y, accel_max,
+                accel_pref, target_speed, min_space, time_pref, vehicle_length]
+        
+        obs_buf = th.cat(data, dim=0).transpose(0,1)
+        dummy_root_data = th.ones_like(obs_buf[0])
+        obs_buf = th.vstack([dummy_root_data, obs_buf])
+
+        data = Data(x=obs_buf, edge_index=edge_index)
+
+        return data 
+
+    def getObservation(self, shuffle_order=None, graph=False):
+
+        # self.getObservationGraph()
+        # Get observation. But try to normalize
+        
+        
+        nv = MicroVehicle.default_micro_vehicle(self.speed_limit) 
+
+        position_x = self.vehicle_world_position[:, :, 0] / 1e6 # max lane length
+        position_y = self.vehicle_world_position[:, :, 1] / (5 * 5) # width * num lanes
+        velocity_x = self.vehicle_world_velocity[:, :, 0] / (self.speed_limit * 2)
+        velocity_y = self.vehicle_world_velocity[:, :, 1] / (self.speed_limit * 2)
+        accel_max = self.vehicle_accel_max[:, :] / (nv.accel_max*2)
+        accel_pref = self.vehicle_accel_pref[:, :] / (nv.accel_pref*2)
+        target_speed = self.vehicle_target_speed[:, :] / (nv.target_speed*2)
+        min_space = self.vehicle_min_space[:, :] / (nv.min_space*2)
+        time_pref = self.vehicle_time_pref[:, :] / (nv.time_pref*2)
+        vehicle_length = self.vehicle_length[:, :] / (nv.length*2)
 
         data = [position_x, position_y, velocity_x, velocity_y, accel_max,
                 accel_pref, target_speed, min_space, time_pref, vehicle_length]
@@ -292,6 +419,7 @@ class NGParallelSim(ParallelTrafficSim):
         obs_buf = th.cat(data, dim=1)
         
         return obs_buf.squeeze()
+        
     
     def forward(self, noise: th.Tensor = None):
         '''
@@ -314,6 +442,10 @@ class NGParallelSim(ParallelTrafficSim):
         acc = IDMLayer.apply(accel_max, accel_pref, speed, target_speed, pos_delta, speed_delta, min_space, time_pref, self.delta_time)
 
         if noise is not None:
+
+            print(noise.shape)
+            print(acc.shape)
+
             min_size = min(acc.shape[-1], noise.shape[-1])
             acc = acc.clone()[:min_size] + noise[:min_size]
 
@@ -326,31 +458,35 @@ class NGParallelSim(ParallelTrafficSim):
 
         self.update_info()
 
-    def get_state_and_next_state(self, idx, shuffle=False):
+    def get_state_and_next_state(self, idx, shuffle=False, graph=False):
         ''' for noise model training purposes '''
 
-        rand_indices = None
+        rand_indices = th.arange(0, self.num_vehicle)
         # theta = None 
 
         # generate random indices 
         if shuffle:
             rand_indices = th.randperm(self.num_vehicle)
 
+        if graph: 
+            assert shuffle == False, ""
+
         # if random_rotate:
         #     theta = th.rand(1).item() * 2 * th.pi
         #     self.rotate_trajectory(theta)
 
         # get actual next timestep
-        self.set_state(idx, env_id=None, next_t=True)
+        tdiff = self.set_state(idx, env_id=None, next_t=True)
 
         # record actual next timestep
+        # obs_t1 = self.getObservationGraph() if graph else self.getObservation(shuffle_order=rand_indices)
         obs_t1 = self.getObservation(shuffle_order=rand_indices)
 
         # set initial state
         self.set_state(idx, env_id=None)
         
         # record initial state
-        obs_t0 = self.getObservation(shuffle_order=rand_indices)
+        obs_t0 = self.getObservationGraph() if graph else self.getObservation(shuffle_order=rand_indices)
 
         # if random_rotate: # put the trajectory back lol
         #     self.revert_trajectory()
@@ -360,24 +496,31 @@ class NGParallelSim(ParallelTrafficSim):
                                             mode='constant', value=0)
 
 
-        return obs_t0, obs_t1, rand_indices, idx
+        return obs_t0, obs_t1, rand_indices, idx, tdiff
 
-    def add_noise_and_forward(self, acc_noises, idxs, rand_indices=None):
+    def add_noise_and_forward(self, acc_noises, idxs, rand_indices=None, tdiff=None):
         ''' for noise model training purposes.
             should be called after get_state_and_next_state. '''
 
         tensors = [] 
 
+        if tdiff is None: 
+            tdiff = th.ones_like(acc_noises)
+
+        # iterate through each batch
         for i in range(0, len(acc_noises)):
-            
+
             # set initial state 
             self.set_state(idxs[i].item(), env_id=None)
+            
+            # progress idm for certain # tsteps
+            for _ in range(0, tdiff[i].item()):
 
-            # forward idm step to next state
-            self.forward(noise=acc_noises[i])
+                # forward idm step to next state
+                self.forward(noise=acc_noises[i])
 
-            # record next state
-            obs_t1_hat = self.getObservation(shuffle_order=rand_indices[i])
+                # record next state
+                obs_t1_hat = self.getObservation(shuffle_order=rand_indices[i])
 
             tensors.append(obs_t1_hat.unsqueeze(0))
 
@@ -435,12 +578,12 @@ class NGParallelSim(ParallelTrafficSim):
 
         # create vehicles;
 
-        self.set_state(self.idx, env_id=None)
+        self.set_state(idx, env_id=None)
         self.update_info()
 
     def reset_env(self, env_id: List[int], idx=0):
         super().reset_env(env_id)
 
         with th.no_grad():
-            self.set_state(self.idx, env_id=env_id)
+            self.set_state(idx, env_id=env_id)
             self.update_info()

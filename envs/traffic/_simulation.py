@@ -203,7 +203,6 @@ class ParallelTrafficSim:
         idm_lateral = th.zeros_like(idm_longitudinal)
         idm_speed = self.vehicle_speed[:, idm_idx:].clone()
 
-
         idm_longitudinal = idm_longitudinal.reshape((-1,))
         idm_lateral = idm_lateral.reshape((-1,))
         idm_speed = idm_speed.reshape((-1,))
