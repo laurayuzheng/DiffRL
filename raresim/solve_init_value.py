@@ -15,7 +15,10 @@ import torch as th
 from _inverse import InverseProblem
 from noise_model import NoiseModel
 from envs.traffic.pace_car.simulation import PaceCarSim
-# from ngsim_env.simulation import NGParallelSim
+from ngsim_env.env import TrafficNGSimEnv
+
+CSV_PATHS = ["./data/trajectories-0400-0415.csv",
+            ]
 
 class NGSimInverseProblem(InverseProblem):
 
@@ -34,7 +37,13 @@ class NGSimInverseProblem(InverseProblem):
         self.num_vehicle = num_vehicle
         self.vehicle_length = vehicle_length
         self.dtype = th.float32
+        self.device = 'cuda' if th.cuda.is_available() else 'cpu'
 
+        self.env = TrafficNGSimEnv(CSV_PATHS, 5000, render=args.render, device=self.device,
+                    num_envs=args.num_envs, seed=0,
+                    episode_length=1000, no_grad=True, no_steering=True)
+
+        
     def init_network(self):
 
         '''

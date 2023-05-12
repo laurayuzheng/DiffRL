@@ -23,10 +23,12 @@ import argparse
 
 from ngsim_env.env import TrafficNGSimEnv
 from ngsim_env.simulation import NGParallelSim
-from simple_env.simulator import WorldSim
+from simple_env.simulation import WorldSim
+from simple_env.env import TrafficNoiseEnv
 from envs.traffic.pace_car.env import TrafficPaceCarEnv
 
-CSV_PATHS = ["./data/trajectories-0400-0415.csv",
+
+CSV_PATHS = ["./data/train_i80.csv",
             #  "./data/trajectories-0500-0515.csv", 
             #  "./data/trajectories-0515-0530.csv"
              ]
@@ -40,7 +42,7 @@ def set_seed(seed):
 
 parser = argparse.ArgumentParser()
 # parser.add_argument('--env', type = str, default = 'TrafficRoundaboutEnv')
-parser.add_argument('--num-envs', type = int, default = 1)
+parser.add_argument('--num-envs', type = int, default = 2)
 parser.add_argument('--render', default = False, action = 'store_true')
 
 args = parser.parse_args()
@@ -70,14 +72,14 @@ seeding()
 # Testing the Environment #
 ###########################
 
-env = TrafficNGSimEnv(CSV_PATHS, 5000, render=args.render, device=device,
+env = TrafficNoiseEnv(num_idm_vehicle=200, render=args.render, device=device,
                       num_envs=args.num_envs, seed=0,
                       episode_length=1000, no_grad=True, no_steering=True)
         
 # env = TrafficPaceCarEnv(device="cpu", num_envs=100, num_auto_vehicle=0, num_idm_vehicle=50, num_lane=5)
 
 # obs = env.reset(idx=5000)
-obs = env.reset(idx=100)
+obs = env.reset()
 
 num_actions = env.num_actions
 

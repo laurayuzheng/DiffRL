@@ -173,8 +173,11 @@ class NoiseModel:
 
                 with torch.no_grad():
 
-                    obs0 = obs0.to(self.device, dtype=torch.float32)
-                    obs1 = obs1.to(self.device, dtype=torch.float32)
+                    # obs0 = obs0.to(self.device, dtype=torch.float32)
+                    # obs1 = obs1.to(self.device, dtype=torch.float32)
+                    
+                    obs0 = obs0.to(self.device)
+                    obs1 = obs1.to(self.device)
 
                     obs0_reshape, obs0_mask = to_dense_batch(obs0.x, obs0.x_batch, fill_value=0)
 

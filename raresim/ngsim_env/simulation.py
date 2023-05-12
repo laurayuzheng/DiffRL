@@ -369,10 +369,6 @@ class NGParallelSim(ParallelTrafficSim):
 
     def getObservation(self, shuffle_order=None, graph=False):
 
-        # self.getObservationGraph()
-        # Get observation. But try to normalize
-        
-        
         nv = MicroVehicle.default_micro_vehicle(self.speed_limit) 
 
         position_x = self.vehicle_world_position[:, :, 0] / 1e6 # max lane length
@@ -442,9 +438,6 @@ class NGParallelSim(ParallelTrafficSim):
         acc = IDMLayer.apply(accel_max, accel_pref, speed, target_speed, pos_delta, speed_delta, min_space, time_pref, self.delta_time)
 
         if noise is not None:
-
-            print(noise.shape)
-            print(acc.shape)
 
             min_size = min(acc.shape[-1], noise.shape[-1])
             acc = acc.clone()[:min_size] + noise[:min_size]
