@@ -8,7 +8,7 @@ from torch.utils.data import Dataset
 
 from ngsim_env.simulation import NGParallelSim
 
-from torch_geometric.data import Data, Dataset as GeometricDataset
+from torch_geometric.data import Data, Dataset as GeometricDataset, InMemoryDataset
 from torch_geometric.data import download_url
 
 CSV_PATHS = ["./data/trajectories-0400-0415.csv",
@@ -106,6 +106,25 @@ class NGSimDatasetOfflineGraph(GeometricDataset):
         tdiff = torch.tensor(data['t_diff'], dtype=torch.int64)
 
         return obs0, obs1, rand_indices, idx, tdiff
+
+class ForwardSimGraphDataset(InMemoryDataset):
+    def __init__(self, root, x, device='cpu', max_vehicles=300, num_envs=1, transform=None, pre_transform=None, pre_filter=None):
+        super().__init__(root, transform, pre_transform, pre_filter)
+        self.x = x
+
+    @property
+    def raw_file_names(self):
+        return []
+
+    @property
+    def processed_file_names(self):
+        return []
+
+    def len(self):
+        return 1
+
+    def get(self, idx):
+        return self.x
 
 if __name__ == "__main__":
 

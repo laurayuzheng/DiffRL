@@ -72,7 +72,7 @@ seeding()
 # Testing the Environment #
 ###########################
 
-env = TrafficNoiseEnv(num_idm_vehicle=200, render=args.render, device=device,
+env = TrafficNoiseEnv(num_idm_vehicle=150, render=args.render, device=device,
                       num_envs=args.num_envs, seed=0,
                       episode_length=1000, no_grad=True, no_steering=True)
         

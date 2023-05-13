@@ -19,9 +19,9 @@ class TrafficNoiseEnv(DFlexEnv):
 
     def __init__(self, render=False, device='cuda:0', num_envs=1, seed=0, episode_length=1000, 
                  no_grad=True, stochastic_init=False, MM_caching_frequency = 1, early_termination = False,
-                num_auto_vehicle=1, num_idm_vehicle=1, no_steering=False, delta_time=0.1):
+                num_auto_vehicle=0, num_idm_vehicle=1, no_steering=False, delta_time=0.1):
 
-        self.num_auto_vehicle = 0
+        self.num_auto_vehicle = num_auto_vehicle
         self.num_idm_vehicle = num_idm_vehicle
         self.num_lane = 5
         self.speed_limit = 105
@@ -88,17 +88,17 @@ class TrafficNoiseEnv(DFlexEnv):
                 image = self.viewer.get_image()
                 return image
     
-    def step(self, actions: torch.Tensor):
+    def step(self, actions: torch.Tensor, noise=None):
         with df.ScopedTimer("simulate", active=False, detailed=False):
             actions = actions.view((self.num_envs, self.num_actions))
             
-            actions = torch.clip(actions, -1., 1.)
-            actions[:, 0::2] = actions[:, 0::2] * self.steering_bound
-            actions[:, 1::2] = actions[:, 1::2] * self.acceleration_bound
+            # actions = torch.clip(actions, -1., 1.)
+            # actions[:, 0::2] = actions[:, 0::2] * self.steering_bound
+            # actions[:, 1::2] = actions[:, 1::2] * self.acceleration_bound
             
-            self.actions = actions
+            # self.actions = actions
             
-            self.sim.forward(actions)
+            self.sim.forward(noise=noise)
             self.sim_time += self.dt
             
         self.reset_buf = torch.zeros_like(self.reset_buf)

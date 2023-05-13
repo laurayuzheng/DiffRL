@@ -31,6 +31,26 @@ class WorldSim(ParallelTrafficSim):
         self.delta_time = 0.1
         self.max_vehicles = max_vehicles
     
+    def set_state_from_obs(self, obs):
+        
+        # obs = th.tensor(obs, dtype=th.float32)
+        obs = obs.clone().detach().requires_grad_(True)
+
+        obs = obs.reshape((-1, 10, self.max_vehicles))
+        obs = obs[:,:,self.num_idm_vehicle] # get rid of padding
+
+        position_x = obs[:,0] * 1e6 
+        position_y = obs[:,1] * (5 * 5)
+        velocity_x = obs[:,2] * (self.speed_limit * 2)
+        velocity_y = obs[:,3] * (self.speed_limit * 2)
+
+        self.vehicle_world_position[:, :, 0] = position_x
+        self.vehicle_world_position[:, :, 1] = position_y 
+        self.vehicle_world_velocity[:, :, 0] = velocity_x 
+        self.vehicle_world_velocity[:, :, 1] = velocity_y 
+
+        self.update_info()
+
 
     def random_initial_state(self):
 
@@ -77,9 +97,8 @@ class WorldSim(ParallelTrafficSim):
         lane_ids = lane_ids[th.nonzero(lane_ids, as_tuple=True)].reshape(self.num_env, num_vehicle)
         lane_ids = lane_ids - 1
 
-        self.init_position = init_position 
-        self.init_speed = init_speed 
-        self.lane_ids = lane_ids
+        return init_position, init_speed, lane_ids 
+    
 
     def reset(self):
 
@@ -107,7 +126,11 @@ class WorldSim(ParallelTrafficSim):
 
         self.fill_next_lane_tensor()
 
-        self.random_initial_state()
+        init_position, init_speed, lane_ids = self.random_initial_state()
+
+        self.init_position = init_position 
+        self.init_speed = init_speed 
+        self.lane_ids = lane_ids
 
         nv = MicroVehicle.default_micro_vehicle(self.speed_limit)
 
@@ -124,6 +147,47 @@ class WorldSim(ParallelTrafficSim):
         self.update_info()
 
         self.active_envs = th.arange(0, self.num_env)
+
+    def getRandomObservation(self):
+
+        init_position, init_speed, lane_ids = self.random_initial_state()
+        nv = MicroVehicle.default_micro_vehicle(self.speed_limit)
+
+        vehicle_position = self.tensorize_value(init_position.reshape((self.num_env, -1)))
+        vehicle_speed = self.tensorize_value(init_speed.reshape((self.num_env, -1)))
+        vehicle_accel_max = self.tensorize_value(th.ones_like(self.vehicle_accel_max) * nv.accel_max)
+        vehicle_accel_pref = self.tensorize_value(th.ones_like(self.vehicle_accel_pref) * nv.accel_pref)
+        vehicle_target_speed = self.tensorize_value(th.ones_like(self.vehicle_target_speed) * nv.target_speed)
+        vehicle_min_space = self.tensorize_value(th.ones_like(self.vehicle_min_space) * nv.min_space)
+        vehicle_time_pref = self.tensorize_value(th.ones_like(self.vehicle_time_pref) * nv.time_pref)
+        vehicle_lane_id = self.tensorize_value(lane_ids, dtype=th.int32)
+        vehicle_length = self.tensorize_value(th.ones_like(self.vehicle_time_pref) * nv.length)
+
+        vehicle_world_position, vehicle_world_velocity, vehicle_world_heading = self.calculateWorldValues(vehicle_position, vehicle_speed, vehicle_lane_id)
+
+        nv = MicroVehicle.default_micro_vehicle(self.speed_limit) 
+
+        position_x = vehicle_world_position[:, :, 0] / 1e6 # max lane length
+        position_y = vehicle_world_position[:, :, 1] / (5 * 5) # width * num lanes
+        velocity_x = vehicle_world_velocity[:, :, 0] / (self.speed_limit * 2)
+        velocity_y = vehicle_world_velocity[:, :, 1] / (self.speed_limit * 2)
+        accel_max = vehicle_accel_max[:, :] / (nv.accel_max*2)
+        accel_pref = vehicle_accel_pref[:, :] / (nv.accel_pref*2)
+        target_speed = vehicle_target_speed[:, :] / (nv.target_speed*2)
+        min_space = vehicle_min_space[:, :] / (nv.min_space*2)
+        time_pref = vehicle_time_pref[:, :] / (nv.time_pref*2)
+        vehicle_length = vehicle_length[:, :] / (nv.length*2)
+        
+        data = [position_x, position_y, velocity_x, velocity_y, accel_max,
+                accel_pref, target_speed, min_space, time_pref, vehicle_length]
+
+        # zero-pad observation to have a consistent size across all data
+        for i, d in enumerate(data):
+            data[i] = th.nn.functional.pad(input=d, pad=(0, self.max_vehicles - d.shape[-1], 0, 0), mode='constant', value=0)
+
+        obs_buf = th.cat(data, dim=1)
+
+        return obs_buf.squeeze()
 
     def forward(self, noise: th.Tensor = None):
         '''
@@ -146,23 +210,32 @@ class WorldSim(ParallelTrafficSim):
         acc = IDMLayer.apply(accel_max, accel_pref, speed, target_speed, pos_delta, speed_delta, min_space, time_pref, self.delta_time)
 
         if noise is not None:
+        
+            start_i = noise.shape[1] - acc.shape[1]
+            noise = noise[:, start_i:]
+            noise = noise.reshape(acc.shape)
+
             min_size = min(acc.shape[-1], noise.shape[-1])
             acc = acc.clone()[:min_size] + noise[:min_size]
 
         if self.active_envs.nelement() > 0: # small optimization
-
+            
             # 3. update pos and vel of vehicles;
             self.vehicle_position[self.active_envs, self.num_auto_vehicle:] = (self.vehicle_position.clone() + self.vehicle_speed.clone() * self.delta_time)[self.active_envs, self.num_auto_vehicle:]
-            self.vehicle_speed[self.active_envs, self.num_auto_vehicle:] = (self.vehicle_speed[self.active_envs, self.num_auto_vehicle:].clone() + acc * self.delta_time)
+            self.vehicle_speed[self.active_envs, self.num_auto_vehicle:] = (self.vehicle_speed.clone() + acc * self.delta_time)[self.active_envs, self.num_auto_vehicle:]
 
             # 6. move idm vehicles from lane to lane;
             self.update_idm_vehicle_lane_membership()
 
             self.update_info()
 
-    def reset_env(self, env_id: List[int]):
+    def reset_env(self, env_id: List[int], restart_all=False):
         super().reset_env(env_id)
-        self.active_envs = self.active_envs[self.active_envs!=self.active_envs[env_id]]
+
+        if restart_all:
+            self.active_envs = th.arange(0, self.num_env)
+        else:
+            self.active_envs = self.active_envs[self.active_envs!=self.active_envs[env_id]]
 
     def getObservationGraph(self):
 
@@ -255,7 +328,7 @@ class WorldSim(ParallelTrafficSim):
         min_space = self.vehicle_min_space[:, :] / (nv.min_space*2)
         time_pref = self.vehicle_time_pref[:, :] / (nv.time_pref*2)
         vehicle_length = self.vehicle_length[:, :] / (nv.length*2)
-
+        
         data = [position_x, position_y, velocity_x, velocity_y, accel_max,
                 accel_pref, target_speed, min_space, time_pref, vehicle_length]
 
@@ -287,5 +360,5 @@ class WorldSim(ParallelTrafficSim):
             data[i] = th.nn.functional.pad(input=d, pad=(0, self.max_vehicles - d.shape[-1], 0, 0), mode='constant', value=0)
 
         obs_buf = th.cat(data, dim=1)
-        
+
         return obs_buf.squeeze()

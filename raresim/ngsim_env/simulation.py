@@ -385,6 +385,7 @@ class NGParallelSim(ParallelTrafficSim):
         data = [position_x, position_y, velocity_x, velocity_y, accel_max,
                 accel_pref, target_speed, min_space, time_pref, vehicle_length]
 
+
         if shuffle_order is not None: 
             
             shuffle_order = list(shuffle_order.detach().cpu().numpy())

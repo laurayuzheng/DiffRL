@@ -286,6 +286,105 @@ class ParallelTrafficSim:
         
         return
 
+    def calculateWorldValues(self, vehicle_position, vehicle_speed, vehicle_lane_id):
+        '''
+        Update world position, velocity, heading of idm vehicles.
+        '''
+
+        if self.no_steering:
+            idm_idx = self.idm_vehicle_id(0)
+            num_idm_vehicle = self.num_idm_vehicle
+        else:
+            idm_idx = self.idm_vehicle_id(0)
+            num_idm_vehicle = self.num_idm_vehicle
+
+        idm_longitudinal = vehicle_position[:, idm_idx:].clone()
+        idm_lateral = th.zeros_like(idm_longitudinal)
+        idm_speed = vehicle_speed[:, idm_idx:].clone()
+
+        idm_longitudinal = idm_longitudinal.reshape((-1,))
+        idm_lateral = idm_lateral.reshape((-1,))
+        idm_speed = idm_speed.reshape((-1,))
+
+        # straight lane;
+        straight_idm_world_position, straight_idm_world_velocity, straight_idm_world_heading = \
+            straight_lane_position_velocity(idm_longitudinal,
+                                                idm_lateral,
+                                                idm_speed,
+                                                self.straight_lane_start,
+                                                self.straight_lane_end,
+                                                self.straight_lane_heading,
+                                                self.straight_lane_direction,
+                                                self.straight_lane_direction_lateral)
+
+        # circular lane;
+        circular_idm_world_position, circular_idm_world_velocity, circular_idm_world_heading = \
+            circular_lane_position_velocity(idm_longitudinal,
+                                                idm_lateral,
+                                                idm_speed,
+                                                self.circular_lane_center,
+                                                self.circular_lane_radius,
+                                                self.circular_lane_start_phase,
+                                                self.circular_lane_end_phase,
+                                                self.circular_lane_clockwise)
+
+        # sine lane;
+        sine_idm_world_position, sine_idm_world_velocity, sine_idm_world_heading = \
+            sine_lane_position_velocity(idm_longitudinal,
+                                                idm_lateral,
+                                                idm_speed,
+                                                self.sine_lane_start,
+                                                self.sine_lane_end,
+                                                self.sine_lane_heading,
+                                                self.sine_lane_direction,
+                                                self.sine_lane_direction_lateral,
+                                                self.sine_lane_amplitude,
+                                                self.sine_lane_pulsation,
+                                                self.sine_lane_phase)
+
+        idm_straight_world_position = straight_idm_world_position.view(self.num_env, num_idm_vehicle, self.num_lane, 2)
+        idm_straight_world_velocity = straight_idm_world_velocity.view(self.num_env, num_idm_vehicle, self.num_lane, 2)
+        idm_straight_world_heading = straight_idm_world_heading.view(self.num_env, num_idm_vehicle, self.num_lane)
+
+        idm_circular_world_position = circular_idm_world_position.view(self.num_env, num_idm_vehicle, self.num_lane, 2)
+        idm_circular_world_velocity = circular_idm_world_velocity.view(self.num_env, num_idm_vehicle, self.num_lane, 2)
+        idm_circular_world_heading = circular_idm_world_heading.view(self.num_env, num_idm_vehicle, self.num_lane)
+
+        idm_sine_world_position = sine_idm_world_position.view(self.num_env, num_idm_vehicle, self.num_lane, 2)
+        idm_sine_world_velocity = sine_idm_world_velocity.view(self.num_env, num_idm_vehicle, self.num_lane, 2)
+        idm_sine_world_heading = sine_idm_world_heading.view(self.num_env, num_idm_vehicle, self.num_lane)
+
+        # collect info;
+        idm_world_position = th.zeros_like(idm_straight_world_position)
+        idm_world_velocity = th.zeros_like(idm_straight_world_velocity)
+        idm_world_heading = th.zeros_like(idm_straight_world_heading)
+
+        idm_world_position[:, :, self.straight_lane_ids] = idm_straight_world_position[:, :, self.straight_lane_ids]
+        idm_world_velocity[:, :, self.straight_lane_ids] = idm_straight_world_velocity[:, :, self.straight_lane_ids]
+        idm_world_heading[:, :, self.straight_lane_ids] = idm_straight_world_heading[:, :, self.straight_lane_ids]
+
+        idm_world_position[:, :, self.circular_lane_ids] = idm_circular_world_position[:, :, self.circular_lane_ids]
+        idm_world_velocity[:, :, self.circular_lane_ids] = idm_circular_world_velocity[:, :, self.circular_lane_ids]
+        idm_world_heading[:, :, self.circular_lane_ids] = idm_circular_world_heading[:, :, self.circular_lane_ids]
+
+        idm_world_position[:, :, self.sine_lane_ids] = idm_sine_world_position[:, :, self.sine_lane_ids]
+        idm_world_velocity[:, :, self.sine_lane_ids] = idm_sine_world_velocity[:, :, self.sine_lane_ids]
+        idm_world_heading[:, :, self.sine_lane_ids] = idm_sine_world_heading[:, :, self.sine_lane_ids]
+
+        idm_lane_id = vehicle_lane_id[:, idm_idx:].clone()
+        idm_lane_id_A = idm_lane_id.unsqueeze(-1).unsqueeze(-1).expand((-1, -1, -1, 2)).to(dtype=th.int64)
+        idm_lane_id_B = idm_lane_id.unsqueeze(-1).to(dtype=th.int64)
+        
+        sel_idm_world_position = th.gather(idm_world_position, 2, idm_lane_id_A).squeeze(2)
+        sel_idm_world_velocity = th.gather(idm_world_velocity, 2, idm_lane_id_A).squeeze(2)
+        sel_idm_world_heading = th.gather(idm_world_heading, 2, idm_lane_id_B).squeeze(2)
+
+        vehicle_world_position = sel_idm_world_position
+        vehicle_world_velocity = sel_idm_world_velocity
+        vehicle_world_heading = sel_idm_world_heading
+        
+        return vehicle_world_position, vehicle_world_velocity, vehicle_world_heading
+
     def update_auto_world_info(self, env_id):
 
         '''
