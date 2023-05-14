@@ -28,6 +28,7 @@ from dataset import ForwardSimGraphDataset
 
 from _inverse import InverseProblem
 from simple_env.env import TrafficNoiseEnv
+from externals.traffic.road.vehicle.micro_vehicle import MicroVehicle
 
 from torch_geometric.nn import GCN
 from torch_geometric.utils import to_dense_batch
@@ -110,10 +111,10 @@ class NGSimInverseProblem:
                 param.requires_grad = False 
     
     def get_state(self):
-        return self.sim.getObservation(graph=False)
+        return self.sim.getObservationGraph()
 
     def set_state(self, x):
-        self.sim.set_state_from_obs(x)
+        self.sim.set_state_from_obs(x.x)
 
     def initialize(self):
 
@@ -129,6 +130,8 @@ class NGSimInverseProblem:
 
         env_ids = th.arange(self.sim.num_env, dtype=th.int64)
         self.sim.reset_env(env_ids, restart_all=True)
+
+        self.sim.set_random_state()
 
         self.beg_state = self.get_state()
 
@@ -153,7 +156,7 @@ class NGSimInverseProblem:
         with autocast(enabled=(self.device=="cuda")):
                                                 
             noise = self.net(obs0_reshape, obs0.edge_index) # forward pass 
-        
+
         return noise
 
     def simulate(self):
@@ -216,7 +219,7 @@ class NGSimInverseProblem:
         '''
 
         speed_limit = self.speed_limit
-        num_vehicle = self.sim.max_vehicles
+        num_vehicle = self.num_vehicle + 1 # add dummy node
         vehicle_length = self.vehicle_length
         dtype = self.dtype
 
@@ -233,22 +236,39 @@ class NGSimInverseProblem:
 
         return lb, ub
 
+    def revert_observation(self, x):
+        ''' Reverts normalized observation back to normal values
+        '''
+        orig_shape = x.shape 
+        nv = MicroVehicle.default_micro_vehicle(self.speed_limit) 
+        x = x.clone().reshape((self.sim.num_env, 10, self.sim.max_vehicles))
+
+        x[:, 0] = x[:, 0] * 1e6 
+        x[:, 1] = x[:, 1] * (5*5) 
+        x[:, 2] = x[:, 2] * (self.speed_limit * 2) 
+        x[:, 3] = x[:, 3] * (self.speed_limit * 2) 
+        x[:, 4] = x[:, 4] * (nv.accel_max*2)
+        x[:, 5] = x[:, 5] * (nv.accel_pref*2) 
+        x[:, 6] = x[:, 6] * (nv.target_speed*2)
+        x[:, 7] = x[:, 7] * (nv.min_space*2)
+        x[:, 8] = x[:, 8] * (nv.time_pref*2) 
+        x[:, 9] = x[:, 9] * (nv.length*2)
+
+        return x.reshape(orig_shape)
+
     def compute_error(self, sa, sb):
 
         '''
         Compute error between two states (MSE).
         '''
+        # sa = self.revert_observation(sa)
+        # sb = self.revert_observation(sb)
+        sa = sa.x[1:,:2]
+        sb = sb.x[1:,:2]
 
-        position_a: th.Tensor = sa[0]
-        position_b: th.Tensor = sb[0]
-
-        speed_a: th.Tensor = sa[1]
-        speed_b: th.Tensor = sb[1]
-
-        position_error = th.pow(position_a - position_b, 2.0).sum()
-        speed_error = th.pow(speed_a - speed_b, 2.0).sum()
+        error = th.sum((sa - sb) ** 2)
         
-        return position_error + speed_error
+        return error
     
     def evaluate(self):
 
@@ -359,23 +379,28 @@ class NGSimInverseProblem:
         @ lr: Step size for gradient descent.
         '''
 
-        est_beg_state = est.clone().detach().requires_grad_(True)
+        est_beg_state = est.clone()
+        est_beg_state.x.requires_grad_(True)
 
         beg_errors = []
         end_errors = []
 
-        optimizer: th.optim.SGD = self.init_torch_optimizer([est_beg_state], lr)
+        optimizer: th.optim.SGD = self.init_torch_optimizer([est_beg_state.x], lr)
+        # optimizer = th.optim.SGD([est_beg_state.x[:,1:]], lr)
 
         pbar = tqdm(range(self.num_episode))
 
         for _ in pbar:
-            est_beg_state = est_beg_state.clone().detach().requires_grad_(True)
 
+            optimizer.zero_grad()
+            # print(est_beg_state.x[1:, :2])
             self.set_state(est_beg_state)
 
             self.simulate()
 
             est_end_state = self.get_state()
+
+            # print(est_end_state.x[1:, :2])
 
             # compute error based on beginning state;
 
@@ -386,23 +411,23 @@ class NGSimInverseProblem:
             end_errors.append(end_error.item())
 
             # optimize;
-
-            optimizer.zero_grad()
             end_error.backward(retain_graph=True)
             optimizer.step()
 
             # apply bound;
-            orig_shape = est_beg_state.shape
-            est_beg_state = est_beg_state.reshape((self.sim.num_env, 10, self.sim.max_vehicles))
+            # new_x = est_beg_state.x[1:].clone()
+            orig_shape = est_beg_state.x.shape
+
+            # new_x = new_x.reshape((self.sim.num_env, 10, -1))
 
             with th.no_grad():
                 lb, ub = self.bounds()
-                est_beg_state[:, 0] = th.max(est_beg_state[:, 0], lb[0])
-                est_beg_state[:, 1] = th.max(est_beg_state[:, 1], lb[1])
-                est_beg_state[:, 0] = th.min(est_beg_state[:, 0], ub[0])
-                est_beg_state[:, 1] = th.min(est_beg_state[:, 1], ub[1])
+                est_beg_state.x[:, 0] = th.max(est_beg_state.x[:, 0], lb[0])
+                est_beg_state.x[:, 1] = th.max(est_beg_state.x[:, 1], lb[1])
+                est_beg_state.x[:, 0] = th.min(est_beg_state.x[:, 0], ub[0])
+                est_beg_state.x[:, 1] = th.min(est_beg_state.x[:, 1], ub[1])
 
-            est_beg_state = est_beg_state.reshape(orig_shape)
+            est_beg_state.x = est_beg_state.x.reshape(orig_shape)
 
             pbar.set_description("GD : Error = {:.4f}".format(end_error.item()))
 
@@ -618,11 +643,11 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser("Script to solve inverse problem microscopic traffic simulation")
     parser.add_argument("--n_trial", type=int, default=5)
-    parser.add_argument("--n_vehicle", type=int, default=100)
+    parser.add_argument("--n_vehicle", type=int, default=5)
     parser.add_argument("--n_timestep", type=int, default=1000)
     parser.add_argument("--vehicle_length", type=float, default=5.0)
     parser.add_argument("--speed_limit", type=float, default=30.0)
-    parser.add_argument("--delta_time", type=float, default=0.03)
+    parser.add_argument("--delta_time", type=float, default=0.1)
     parser.add_argument("--n_episode", type=int, default=100)
     args = parser.parse_args()
 
@@ -635,6 +660,7 @@ if __name__ == "__main__":
     speed_limit = args.speed_limit
     vehicle_length = args.vehicle_length
     delta_time = args.delta_time
+    # model_pt = None
     model_pt = "/scratch/DiffRL/raresim/weights/may8_graph/best_vloss_epochs=44.pt"
 
     # problem solve;

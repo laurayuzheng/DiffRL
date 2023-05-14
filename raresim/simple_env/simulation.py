@@ -34,23 +34,22 @@ class WorldSim(ParallelTrafficSim):
     def set_state_from_obs(self, obs):
         
         # obs = th.tensor(obs, dtype=th.float32)
-        obs = obs.clone().detach().requires_grad_(True)
+        obs = obs[1:].clone() # .requires_grad_(True) #.clone().detach().requires_grad_(True)
 
-        obs = obs.reshape((-1, 10, self.max_vehicles))
-        obs = obs[:,:,self.num_idm_vehicle] # get rid of padding
+        obs = obs.reshape((self.num_env, 10, -1))
+        obs = obs[:,:,:self.num_idm_vehicle] # get rid of padding
 
         position_x = obs[:,0] * 1e6 
         position_y = obs[:,1] * (5 * 5)
         velocity_x = obs[:,2] * (self.speed_limit * 2)
         velocity_y = obs[:,3] * (self.speed_limit * 2)
 
-        self.vehicle_world_position[:, :, 0] = position_x
-        self.vehicle_world_position[:, :, 1] = position_y 
-        self.vehicle_world_velocity[:, :, 0] = velocity_x 
-        self.vehicle_world_velocity[:, :, 1] = velocity_y 
+        self.vehicle_position = position_x
+        # self.vehicle_position[:, :, 1] = position_y 
+        self.vehicle_speed = velocity_x 
+        # self.vehicle_speed[:, :, 1] = velocity_y 
 
         self.update_info()
-
 
     def random_initial_state(self):
 
@@ -126,8 +125,11 @@ class WorldSim(ParallelTrafficSim):
 
         self.fill_next_lane_tensor()
 
-        init_position, init_speed, lane_ids = self.random_initial_state()
+        self.set_random_state()
 
+    def set_random_state(self):
+        init_position, init_speed, lane_ids = self.random_initial_state()
+        
         self.init_position = init_position 
         self.init_speed = init_speed 
         self.lane_ids = lane_ids
@@ -151,6 +153,50 @@ class WorldSim(ParallelTrafficSim):
     def getRandomObservation(self):
 
         init_position, init_speed, lane_ids = self.random_initial_state()
+
+        vehicle_lane_id = lane_ids.clone()
+        vehicle_position = init_position.clone()
+        vehicle_speed = init_speed.clone()
+
+        # (num env, num vehicle, num lane)
+        lane_id_tensor = th.arange(0, self.num_lane, dtype=th.int32, device=self.device)
+        lane_id_tensor = lane_id_tensor.unsqueeze(0).unsqueeze(0).expand((self.num_env, self.num_vehicle, self.num_lane))
+        vehicle_lane_id_tensor = vehicle_lane_id.unsqueeze(-1).expand((self.num_env, self.num_vehicle, self.num_lane))
+        vehicle_lane_id_tensor = vehicle_lane_id_tensor - lane_id_tensor
+        vehicle_lane_membership_tensor = vehicle_lane_id_tensor == 0
+
+        # (num_env, num lane, num vehicle)
+        lane_vehicle_membership_tensor = vehicle_lane_membership_tensor.transpose(1, 2)
+        lane_vehicle_position_tensor = vehicle_position.unsqueeze(1).expand((self.num_env, self.num_lane, self.num_vehicle))
+        inf_tensor = th.zeros((self.num_env, self.num_lane, self.num_vehicle))
+        lane_vehicle_position_tensor = th.where(lane_vehicle_membership_tensor,
+                                                    lane_vehicle_position_tensor,
+                                                    inf_tensor)
+        
+        lane_vehicle_speed_tensor = vehicle_speed.unsqueeze(1).expand((self.num_env, self.num_lane, self.num_vehicle))
+        lane_vehicle_speed_tensor = th.where(lane_vehicle_membership_tensor,
+                                                    lane_vehicle_speed_tensor,
+                                                    inf_tensor)
+
+        start_nodes = th.nonzero(lane_vehicle_membership_tensor)
+
+        start_nodes = start_nodes[:,1:].transpose(0,1) #.flip(1)
+
+        edges = []
+        lane_node_list = [[] for _ in range(self.num_lane)] 
+
+        for i in range(start_nodes.shape[1]):
+            lane_node_list[start_nodes[0][i]].append(int(start_nodes[1][i])+1)
+
+        for i in range(len(lane_node_list)):
+            for j in range(len(lane_node_list[i])):
+                if j == len(lane_node_list[i]) - 1:
+                    edges.append([0, lane_node_list[i][j]])
+                else:
+                    edges.append([lane_node_list[i][j+1], lane_node_list[i][j]])
+        
+        edge_index = th.tensor(edges, dtype=th.long).transpose(0,1) # edges for graph data done
+
         nv = MicroVehicle.default_micro_vehicle(self.speed_limit)
 
         vehicle_position = self.tensorize_value(init_position.reshape((self.num_env, -1)))
@@ -182,12 +228,17 @@ class WorldSim(ParallelTrafficSim):
                 accel_pref, target_speed, min_space, time_pref, vehicle_length]
 
         # zero-pad observation to have a consistent size across all data
-        for i, d in enumerate(data):
-            data[i] = th.nn.functional.pad(input=d, pad=(0, self.max_vehicles - d.shape[-1], 0, 0), mode='constant', value=0)
+        # for i, d in enumerate(data):
+        #     data[i] = th.nn.functional.pad(input=d, pad=(0, self.max_vehicles - d.shape[-1], 0, 0), mode='constant', value=0)
 
-        obs_buf = th.cat(data, dim=1)
+        # obs_buf = th.cat(data, dim=1)
+        obs_buf = th.cat(data, dim=0).transpose(0,1)
+        dummy_root_data = th.ones_like(obs_buf[0])
+        obs_buf = th.vstack([dummy_root_data, obs_buf])
 
-        return obs_buf.squeeze()
+        data = Data(x=obs_buf, edge_index=edge_index)
+
+        return data
 
     def forward(self, noise: th.Tensor = None):
         '''
@@ -217,6 +268,11 @@ class WorldSim(ParallelTrafficSim):
 
             min_size = min(acc.shape[-1], noise.shape[-1])
             acc = acc.clone()[:min_size] + noise[:min_size]
+
+            # clip negative velocities 
+
+            v_next = speed + acc * self.delta_time
+            acc = th.where(v_next >= 0, acc, -speed / self.delta_time)
 
         if self.active_envs.nelement() > 0: # small optimization
             
