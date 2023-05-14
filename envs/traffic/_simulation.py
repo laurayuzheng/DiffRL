@@ -876,8 +876,11 @@ class ParallelTrafficSim:
 
         return lane_id
 
-    def tensorize_value(self, value: np.ndarray, dtype=th.float32):
-        return th.tensor(value, dtype=dtype, device=self.device)
+    def tensorize_value(self, value: np.ndarray, dtype=th.float32):            
+        if th.is_tensor(value):
+            return value.clone().detach().to(self.device, dtype=dtype)
+        else:
+            return th.tensor(value, dtype=dtype, device=self.device)
 
     def add_vehicles_to_road_for_view(self):
 

@@ -32,22 +32,20 @@ class WorldSim(ParallelTrafficSim):
         self.max_vehicles = max_vehicles
     
     def set_state_from_obs(self, obs):
+        ''' For highway environment only.
+        '''
         
-        # obs = th.tensor(obs, dtype=th.float32)
-        obs = obs[1:].clone() # .requires_grad_(True) #.clone().detach().requires_grad_(True)
+        obs = obs[1:]
 
         obs = obs.reshape((self.num_env, 10, -1))
         obs = obs[:,:,:self.num_idm_vehicle] # get rid of padding
 
         position_x = obs[:,0] * 1e6 
-        position_y = obs[:,1] * (5 * 5)
         velocity_x = obs[:,2] * (self.speed_limit * 2)
         velocity_y = obs[:,3] * (self.speed_limit * 2)
 
         self.vehicle_position = position_x
-        # self.vehicle_position[:, :, 1] = position_y 
         self.vehicle_speed = velocity_x 
-        # self.vehicle_speed[:, :, 1] = velocity_y 
 
         self.update_info()
 

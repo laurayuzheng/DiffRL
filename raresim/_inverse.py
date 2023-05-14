@@ -440,13 +440,16 @@ class InverseProblem:
         Store the errors in given error lists.
         '''
 
+        beg_state = problem.beg_state
+
+        if th.is_tensor(beg_state) == False: 
+            beg_state = beg_state.x
+
         problem: InverseProblem = problem
 
         end_error = problem.evaluate_vector_state(vstate)
 
-        est_beg_state = problem.unvectorize(vstate)
-
-        beg_error = problem.compute_error(problem.beg_state, est_beg_state)
+        beg_error = problem.compute_error(beg_state.flatten(), vstate.flatten())
 
         beg_errors.append(beg_error.item())
         end_errors.append(end_error.item())

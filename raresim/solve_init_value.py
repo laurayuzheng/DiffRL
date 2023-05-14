@@ -34,9 +34,6 @@ from torch_geometric.nn import GCN
 from torch_geometric.utils import to_dense_batch
 from torch_geometric.loader import DataLoader as GraphLoader
 
-CSV_PATHS = ["./data/trajectories-0400-0415.csv",
-            ]
-
 def blockPrint():
     sys.stdout = open(os.devnull, 'w')
 
@@ -90,6 +87,7 @@ class NGSimInverseProblem:
         self.model_pt = model_pt # path to noise model 
         # self.device = 'cuda' if th.cuda.is_available() else 'cpu'
         self.device = 'cpu'
+        self.criterion = th.nn.MSELoss()
 
         env = TrafficNoiseEnv(num_idm_vehicle=num_vehicle, 
                             render=False, device=self.device,
@@ -114,7 +112,18 @@ class NGSimInverseProblem:
         return self.sim.getObservationGraph()
 
     def set_state(self, x):
-        self.sim.set_state_from_obs(x.x)
+        self.sim.set_state_from_obs(x)
+
+    def tensorize(self, state, requires_grad: bool = True):
+
+        '''
+        Turn the given state into a pytorch tensor.
+        '''
+
+        x: th.Tensor = state.detach().clone()
+        x.requires_grad = requires_grad
+
+        return x
 
     def initialize(self):
 
@@ -131,13 +140,15 @@ class NGSimInverseProblem:
         env_ids = th.arange(self.sim.num_env, dtype=th.int64)
         self.sim.reset_env(env_ids, restart_all=True)
 
-        self.sim.set_random_state()
+        with th.no_grad():
 
-        self.beg_state = self.get_state()
+            self.sim.set_random_state()
 
-        self.simulate()
+            self.beg_state = self.get_state()
 
-        self.end_state = self.get_state()
+            self.simulate()
+
+            self.end_state = self.get_state()
 
     def forward_noise_model(self):
         assert self.net is not None, "no noise net initialized"
@@ -261,10 +272,6 @@ class NGSimInverseProblem:
         '''
         Compute error between two states (MSE).
         '''
-        # sa = self.revert_observation(sa)
-        # sb = self.revert_observation(sb)
-        sa = sa.x[1:,:2]
-        sb = sb.x[1:,:2]
 
         error = th.sum((sa - sb) ** 2)
         
@@ -362,13 +369,16 @@ class NGSimInverseProblem:
         optimization algorithms.
         '''
 
+        vstate = th.Tensor(vstate).reshape((self.num_vehicle+1, 10))
+
         self.set_state(vstate)
 
         self.simulate()
 
-        est_end_state = self.get_state()
+        est_end_state = self.get_state().x.reshape((self.num_vehicle+1, 10))
+        end_state = self.end_state.x.reshape((self.num_vehicle+1,10))
 
-        return self.compute_error(self.end_state, est_end_state)
+        return self.compute_error(end_state[1:, :2], est_end_state[1:, :2])
     
     def solve_gd(self, est, lr: float):
         
@@ -379,55 +389,55 @@ class NGSimInverseProblem:
         @ lr: Step size for gradient descent.
         '''
 
-        est_beg_state = est.clone()
-        est_beg_state.x.requires_grad_(True)
-
+        est_beg_state_x = self.tensorize(est.x, requires_grad=True)
+        beg_state = self.tensorize(self.beg_state.x, requires_grad=False)
+        end_state = self.tensorize(self.end_state.x, requires_grad=False)
+        
         beg_errors = []
         end_errors = []
 
-        optimizer: th.optim.SGD = self.init_torch_optimizer([est_beg_state.x], lr)
-        # optimizer = th.optim.SGD([est_beg_state.x[:,1:]], lr)
+        optimizer: th.optim.SGD = self.init_torch_optimizer([est_beg_state_x], lr)
 
         pbar = tqdm(range(self.num_episode))
 
         for _ in pbar:
 
-            optimizer.zero_grad()
-            # print(est_beg_state.x[1:, :2])
-            self.set_state(est_beg_state)
+            self.sim.reset() # need to reset to clear computation graph
+
+            est_beg_state_init = est_beg_state_x.clone()
+
+            self.set_state(est_beg_state_init)
 
             self.simulate()
 
-            est_end_state = self.get_state()
-
-            # print(est_end_state.x[1:, :2])
+            est_end_state = self.get_state().x
 
             # compute error based on beginning state;
 
-            beg_error: th.Tensor = self.compute_error(self.beg_state, est_beg_state)
-            end_error: th.Tensor = self.compute_error(self.end_state, est_end_state)
+            beg_error: th.Tensor = self.compute_error(beg_state[1:, :2], est_beg_state_init[1:, :2])
+            end_error: th.Tensor = self.compute_error(end_state[1:, :2], est_end_state[1:, :2])
 
             beg_errors.append(beg_error.item())
             end_errors.append(end_error.item())
 
             # optimize;
-            end_error.backward(retain_graph=True)
+            optimizer.zero_grad()
+            end_error.backward()
             optimizer.step()
 
+            est_end_state = None
+
             # apply bound;
-            # new_x = est_beg_state.x[1:].clone()
-            orig_shape = est_beg_state.x.shape
-
-            # new_x = new_x.reshape((self.sim.num_env, 10, -1))
-
             with th.no_grad():
+                orig_shape = est_beg_state_x.shape
                 lb, ub = self.bounds()
-                est_beg_state.x[:, 0] = th.max(est_beg_state.x[:, 0], lb[0])
-                est_beg_state.x[:, 1] = th.max(est_beg_state.x[:, 1], lb[1])
-                est_beg_state.x[:, 0] = th.min(est_beg_state.x[:, 0], ub[0])
-                est_beg_state.x[:, 1] = th.min(est_beg_state.x[:, 1], ub[1])
+                est_beg_state_x[:, 0] = th.max(est_beg_state_x[:, 0], lb[0])
+                est_beg_state_x[:, 1] = th.max(est_beg_state_x[:, 1], lb[1])
+                est_beg_state_x[:, 0] = th.min(est_beg_state_x[:, 0], ub[0])
+                est_beg_state_x[:, 1] = th.min(est_beg_state_x[:, 1], ub[1])
+                est_beg_state_x = est_beg_state_x.reshape(orig_shape)
 
-            est_beg_state.x = est_beg_state.x.reshape(orig_shape)
+            th.cuda.empty_cache()
 
             pbar.set_description("GD : Error = {:.4f}".format(end_error.item()))
 
@@ -440,7 +450,8 @@ class NGSimInverseProblem:
         Solve problem using CMA-ES method.
         '''
 
-        est_beg_state = est
+        est_beg_state = est.x.flatten()
+        beg_state = self.beg_state.x.clone().flatten()
 
         # cma options: set bounds
         lb, ub = self.bounds()
@@ -459,6 +470,8 @@ class NGSimInverseProblem:
 
         pbar = tqdm(range(num_iteration))
 
+        beg_state = beg_state.reshape((self.num_vehicle + 1, 10))
+
         for _ in pbar:
 
             # optimize;
@@ -471,7 +484,8 @@ class NGSimInverseProblem:
 
             for x in solutions:
 
-                beg_error = self.compute_error(self.beg_state, x).item()
+                x = x.reshape((self.num_vehicle + 1, 10))
+                beg_error = self.compute_error(beg_state[1:, :2], x[1:, :2]).item()
                 end_error = self.evaluate_vector_state(x).item()
 
                 if len(end_errors) < self.num_episode:
@@ -498,8 +512,7 @@ class NGSimInverseProblem:
         '''
 
         # set bounds
-        # lb, ub = self.bounds()
-        lb, ub = th.zeros((self.sim.max_vehicles*10,)), th.ones((self.sim.max_vehicles*10,))
+        lb, ub = th.zeros(((self.num_vehicle+1)*10,)), th.ones(((self.num_vehicle+1)*10,))
 
         # lb = th.cat([lb[0], lb[1]]).numpy().tolist()
         # ub = th.cat([ub[0], ub[1]]).numpy().tolist()
@@ -510,7 +523,7 @@ class NGSimInverseProblem:
         bounds = scipy.optimize.Bounds(lb, ub)
 
         # est_beg_state = self.vectorize(est)
-        est_beg_state = est
+        est_beg_state = est.x.flatten()
 
         beg_errors = []
         end_errors = []
@@ -643,7 +656,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser("Script to solve inverse problem microscopic traffic simulation")
     parser.add_argument("--n_trial", type=int, default=5)
-    parser.add_argument("--n_vehicle", type=int, default=5)
+    parser.add_argument("--n_vehicle", type=int, default=50)
     parser.add_argument("--n_timestep", type=int, default=1000)
     parser.add_argument("--vehicle_length", type=float, default=5.0)
     parser.add_argument("--speed_limit", type=float, default=30.0)
@@ -665,7 +678,8 @@ if __name__ == "__main__":
 
     # problem solve;
 
-    run_name = "micro_{}".format(time.time())
+    # run_name = "micro_{}".format(time.time())
+    run_name = "micro_noise_model"
 
     problem = NGSimInverseProblem(num_trial, num_timestep, 
                                   num_episode, delta_time, 
